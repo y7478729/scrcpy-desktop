@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrcpy Desktop</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background: #1C2126;
+            color: #DDE1E6;
+            font-family: 'Poppins', Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            min-height: 100vh;
+            padding: 30px;
+        }
+        .container {
+            background: #2F343A;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 860px;
+            text-align: center;
+            transition: transform 0.2s ease;
+        }
+        .container:hover {
+            transform: translateY(-5px);
+        }
+        .title {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #FFFFFF;
+            margin-bottom: 25px;
+            position: relative;
+        }
+        .title::after {
+            content: "";
+            width: 160px;
+            height: 4px;
+            background: linear-gradient(90deg, #00D4FF, #00A3CC);
+            display: block;
+            margin: 10px auto;
+            border-radius: 2px;
+        }
+        select, input, button {
+            width: 100%;
+            margin-top: 15px;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+        }
+        select, input {
+            background: #3A4047;
+            color: #DDE1E6;
+            box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        select:focus, input:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.5);
+            background: #404850;
+        }
+        button {
+            background: linear-gradient(45deg, #00A3CC, #00D4FF);
+            color: #FFFFFF;
+            font-weight: 600;
+            text-transform: uppercase;
+            cursor: pointer;
+            padding: 14px 20px;
+            box-shadow: 0 2px 8px rgba(0, 163, 204, 0.3);
+        }
+        button:hover {
+            background: linear-gradient(45deg, #008BB0, #00B8E6);
+            box-shadow: 0 4px 12px rgba(0, 163, 204, 0.4);
+        }
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            justify-content: center;
+            margin-top: 15px;
+            max-width: 100%;
+        }
+        .checkbox-group label {
+            background: #3A4047;
+            padding: 10px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            min-width: 120px;
+        }
+        .checkbox-group input {
+            display: none;
+        }
+        .checkbox-group input:checked + label {
+            background: #00A3CC;
+            color: #FFFFFF;
+        }
+        pre {
+            background: #3A4047;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: left;
+            white-space: pre-wrap;
+            margin-top: 20px;
+            min-height: 60px;
+            font-size: 0.95rem;
+        }
+        #statusMessage {
+            margin-top: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            font-weight: 500;
+        }
+        .status-success {
+            background: #43A047;
+            color: #FFFFFF;
+        }
+        .status-error {
+            background: #E53935;
+            color: #FFFFFF;
+        }
+        #ipField {
+            display: none;
+            margin-top: 15px;
+        }
+        #countdownTimer {
+            margin-top: 15px;
+            font-size: 1.3rem;
+            color: #00D4FF;
+            font-weight: 500;
+        }
+        .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #FFFFFF;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 12px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .button-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+        footer {
+            font-size: 1.25rem;
+            color: #A9B1B8;
+            padding: 15px 0;
+        }
+        footer a {
+            color: #00D4FF;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        footer a:hover {
+            color: #00A3CC;
+        }
+        label {
+            display: block;
+            font-size: 1.1rem;
+            color: #B0BEC5;
+            margin-top: 20px;
+            text-align: left;
+        }
+        small {
+            color: #A9B1B8;
+            font-size: 0.85rem;
+            display: block;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">Scrcpy Desktop</div>
+        <label>Mode:</label>
+        <select id="mode" onchange="toggleIpField()">
+            <option value="usb">USB</option>
+            <option value="wifi">Wi-Fi</option>
+        </select>
+        <div id="ipField">
+            <label>Device IP:</label>
+            <input type="text" id="ipAddress" placeholder="e.g., 192.168.1.100">
+            <small>Auto IP detection will occur if USB is connected.</small>
+        </div>
+        <label>Resolution:</label>
+		<select id="resolution">
+			<option value="480x320">480x320</option>
+			<option value="1024x600">1024x600</option>
+			<option value="1280x720">1280x720</option>
+			<option value="1280x800">1280x800</option>
+			<option value="1366x768">1366x768</option>
+			<option value="1440x900">1440x900</option>
+			<option value="1600x900">1600x900</option>
+			<option value="1680x1050">1680x1050</option>
+			<option value="1920x1080">1920x1080</option>
+			<option value="1920x1200">1920x1200</option>
+			<option value="2560x1440">2560x1440</option>
+			<option value="2560x1600">2560x1600</option>
+			<option value="3200x1800">3200x1800</option>
+			<option value="3840x2160">3840x2160</option>
+        </select>
+        <input type="text" id="customResolution" placeholder="Custom Resolution (e.g., 1920x1080)">
+        <label>DPI:</label>
+        <select id="dpi">
+            <option value="160" selected>160dpi</option>
+            <option value="240">240dpi</option>
+            <option value="320">320dpi</option>
+            <option value="480">480dpi</option>
+            <option value="640">640dpi</option>
+        </select>
+        <input type="number" id="customDpi" placeholder="Custom DPI (e.g., 120)">
+        <label>Bitrate:</label>
+        <select id="bitrate">
+            <option value="-b 2M">2 Mbps</option>
+            <option value="-b 5M">5 Mbps</option>
+            <option value="-b 8M" selected>8 Mbps</option>
+        </select>
+        <input type="number" id="customBitrate" placeholder="Custom Bitrate (Mbps)">
+        <label>Max FPS:</label>
+        <select id="maxFps">
+            <option value="--max-fps=30">30 FPS</option>
+            <option value="--max-fps=60" selected>60 FPS</option>
+            <option value="--max-fps=120">120 FPS</option>
+            <option value="--max-fps=240">240 FPS</option>
+        </select>
+        <label>Orientation Lock:</label>
+        <select id="rotationLock">
+            <option value="--capture-orientation=0">Default (0°)</option>
+            <option value="--capture-orientation=90">Rotate Right (90°)</option>
+            <option value="--capture-orientation=180">Flip Upside Down (180°)</option>
+            <option value="--capture-orientation=270">Rotate Left (270°)</option>
+        </select>
+        <label>Additional Options:</label>
+        <div class="checkbox-group">
+            <input type="checkbox" id="turnScreenOff" value="--turn-screen-off" checked>
+            <label for="turnScreenOff">Turn Screen Off</label>
+            <input type="checkbox" id="noAudio" value="--no-audio">
+            <label for="noAudio">No Audio</label>
+            <input type="checkbox" id="fullscreen" value="-f">
+            <label for="fullscreen">Fullscreen</label>
+            <input type="checkbox" id="useAndroid_11" checked>
+            <label for="useAndroid_11">Android 11+ Mode</label>
+            <input type="checkbox" id="noControl" value="--no-control">
+            <label for="noControl">No Control</label>
+            <input type="checkbox" id="disablePowerButton" value="--power-off-on-close">
+            <label for="disablePowerButton">Disable Power Button</label>
+        </div>
+        <button id="startButton" onclick="startScrcpy()">
+            Start
+            <span id="spinner" class="spinner" style="display: none;"></span>
+        </button>
+        <div id="scriptContainer" style="display: none;">
+            <div style="cursor: pointer;" onclick="toggleScript()">Script</div>
+            <pre id="command"></pre>
+        </div>
+        <div id="statusMessage"></div>
+        <div id="countdownTimer"></div>
+    </div>
+    <footer>
+        © 2025 <a href="https://github.com/serifpersia" target="_blank">serifpersia</a>. All rights reserved.
+    </footer>
+    <script>
+        let countdownInterval;
+
+        function toggleIpField() {
+            const mode = document.getElementById("mode").value;
+            const ipField = document.getElementById("ipField");
+            ipField.style.display = mode === "wifi" ? "block" : "none";
+        }
+
+        function setStatus(message, isSuccess) {
+            const statusMessageDiv = document.getElementById("statusMessage");
+            statusMessageDiv.innerText = message;
+            statusMessageDiv.className = "";
+            if (isSuccess) statusMessageDiv.classList.add("status-success");
+            else statusMessageDiv.classList.add("status-error");
+            if (message) {
+                statusMessageDiv.style.opacity = "1";
+                statusMessageDiv.style.transition = "opacity 0.5s ease-in-out";
+                setTimeout(() => {
+                    statusMessageDiv.style.opacity = "0";
+                    setTimeout(() => statusMessageDiv.innerText = "", 500);
+                }, 3000);
+            }
+        }
+
+        document.getElementById("useAndroid_11").addEventListener("change", function() {
+            const noAudioCheckbox = document.getElementById("noAudio");
+            const noAudioLabel = document.querySelector("label[for='noAudio']");
+            if (this.checked) {
+                noAudioCheckbox.disabled = false;
+                noAudioLabel.style.opacity = "1";
+            } else {
+                noAudioCheckbox.disabled = true;
+                noAudioCheckbox.checked = false;
+                noAudioLabel.style.opacity = "0.5";
+            }
+        });
+
+        document.getElementById("useAndroid_11").dispatchEvent(new Event("change"));
+
+        async function startScrcpy() {
+            const startButton = document.getElementById("startButton");
+            const spinner = document.getElementById("spinner");
+            const ipInput = document.getElementById("ipAddress");
+            startButton.disabled = true;
+            startButton.classList.add("button-disabled");
+            spinner.style.display = "inline-block";
+            try {
+                const mode = document.getElementById("mode").value;
+                let ipAddress = mode === "wifi" ? ipInput.value.trim() : null;
+                if (mode === "wifi" && !ipAddress) {
+                    setStatus("Attempting to auto-detect IP via USB...", true);
+                }
+                const detectResponse = await fetch('/detect-device', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode, ip: ipAddress })
+                });
+                const detectData = await detectResponse.json();
+                if (!detectData.success) {
+                    throw new Error(detectData.message);
+                }
+                if (mode === "wifi" && detectData.ip) {
+                    ipAddress = detectData.ip;
+                    ipInput.value = ipAddress;
+                    setStatus(`Auto-detected IP: ${ipAddress}`, true);
+                } else if (mode === "wifi" && !ipAddress) {
+                    throw new Error("Please enter a valid IP address.");
+                }
+                setStatus(`${mode.toUpperCase()}: Phone ${detectData.model} detected. Connecting...`, true);
+                const connectResponse = await fetch('/connect-device', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode, ip: ipAddress })
+                });
+                const connectData = await connectResponse.json();
+                if (!connectData.success) {
+                    throw new Error(connectData.message);
+                }
+                setStatus(`Connection successful. Starting Scrcpy...`, true);
+
+                const resolution = document.getElementById("customResolution").value.trim() || document.getElementById("resolution").value;
+                const dpi = document.getElementById("customDpi").value.trim() || document.getElementById("dpi").value;
+                const bitrate = document.getElementById("customBitrate").value.trim() ? `-b ${document.getElementById("customBitrate").value}M` : document.getElementById("bitrate").value;
+                const maxFps = document.getElementById("maxFps").value;
+                const rotationLock = document.getElementById("rotationLock").value;
+                const options = Array.from(document.querySelectorAll(".checkbox-group input:checked:not(#useAndroid_11)")).map(input => input.value);
+                const useAndroid_11 = document.getElementById("useAndroid_11").checked;
+
+                const scrcpyConfig = {
+                    mode,
+                    resolution,
+                    dpi,
+                    bitrate,
+                    maxFps,
+                    rotationLock,
+                    options,
+                    useAndroid_11
+                };
+                console.log(scrcpyConfig);
+
+                const scrcpyResponse = await fetch('/start-scrcpy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(scrcpyConfig)
+                });
+                const scrcpyData = await scrcpyResponse.text();
+                setStatus(scrcpyData, !scrcpyData.includes("Error"));
+            } catch (error) {
+                setStatus(`Error: ${error.message}`, false);
+            } finally {
+                spinner.style.display = "none";
+                startButton.disabled = false;
+                startButton.classList.remove("button-disabled");
+            }
+        }
+    </script>
+</body>
+</html>
