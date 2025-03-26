@@ -1,6 +1,6 @@
 <div align="center">
 
-  ![image](https://github.com/user-attachments/assets/b459af96-a3ec-4029-b446-73d1f42aa7e1)
+![scrcp-desktop](https://github.com/user-attachments/assets/747cac8e-9635-46d2-bbe1-3d6c04bfeb0a)
 
 </div>
 
