@@ -138,12 +138,18 @@
             display: none;
             margin-top: 15px;
         }
-        #countdownTimer {
-            margin-top: 15px;
-            font-size: 1.3rem;
-            color: #00D4FF;
-            font-weight: 500;
-        }
+
+		input[type="number"] {
+			-moz-appearance: textfield; /* Firefox */
+		}
+
+		/* Webkit browsers (Chrome, Safari, Edge) */
+		input[type="number"]::-webkit-inner-spin-button,
+		input[type="number"]::-webkit-outer-spin-button {
+			-webkit-appearance: none;
+			margin: 0;
+		}
+		
         .spinner {
             display: inline-block;
             width: 24px;
@@ -276,14 +282,11 @@
             <pre id="command"></pre>
         </div>
         <div id="statusMessage"></div>
-        <div id="countdownTimer"></div>
     </div>
     <footer>
         © 2025 <a href="https://github.com/serifpersia" target="_blank">serifpersia</a>. All rights reserved.
     </footer>
     <script>
-        let countdownInterval;
-
         function toggleIpField() {
             const mode = document.getElementById("mode").value;
             const ipField = document.getElementById("ipField");
