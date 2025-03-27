@@ -6,6 +6,7 @@ $adbBatFilePath = Join-Path $scriptDir "adb-command.bat"
 $scrcpyBatFilePath = Join-Path $scriptDir "scrcpy-command.bat"
 
 $global:deviceSerial = $null
+$global:dynamicDisplayID = $null
 
 # Function to execute an ADB command with polling
 function Invoke-AdbCommand {
@@ -187,6 +188,52 @@ function Connect-Device {
     }
 }
 
+# Function to get the dynamic display ID and set it globally
+function Get-DynamicDisplayId {
+    param ([string]$serial)
+
+    # Reset overlays
+    Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 -successPattern ""
+
+    # List initial displays
+    $initialResult = Invoke-AdbCommand "scrcpy -s $serial --list-displays" -timeoutSeconds 5 -successPattern "--display-id"
+    $initialIds = @()
+    if ($initialResult.Success) {
+        foreach ($line in $initialResult.Stdout -split "`n") {
+            if ($line -match "--display-id=(\d+)") {
+                $initialIds += [int]$matches[1]
+            }
+        }
+    }
+    Write-Host "Static display IDs detected: $initialIds"
+
+    # Create overlay display
+    Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices 1920x1080/160" -timeoutSeconds 5 -successPattern ""
+
+    # List displays again
+    $updatedResult = Invoke-AdbCommand "scrcpy -s $serial --list-displays" -timeoutSeconds 5 -successPattern "--display-id"
+    $updatedIds = @()
+    if ($updatedResult.Success) {
+        foreach ($line in $updatedResult.Stdout -split "`n") {
+            if ($line -match "--display-id=(\d+)") {
+                $updatedIds += [int]$matches[1]
+            }
+        }
+    }
+
+    # Identify the new dynamic ID
+    $newIds = $updatedIds | Where-Object { $_ -notin $initialIds }
+    if ($newIds.Count -eq 0) {
+        Write-Host "No new display ID found after creating overlay."
+        $global:dynamicDisplayID = $null
+        return
+    }
+
+    $global:dynamicDisplayID = $newIds[0]
+    Write-Host "Dynamic display ID detected: $global:dynamicDisplayID"
+}
+
+
 try {
     $listener.Start()
     Write-Host "Server running on http://localhost:$port/"
@@ -267,7 +314,6 @@ try {
             $response.Close()
         }
 
-        # Handle /start-scrcpy endpoint
 		elseif ($request.Url.LocalPath -eq "/start-scrcpy") {
 			$response.ContentType = "text/plain"
 			try {
@@ -287,7 +333,8 @@ try {
 						[string]$bitrate,
 						[string[]]$options,
 						[string]$maxFps,
-						[string]$rotationLock
+						[string]$rotationLock,
+						[string]$displayId = $null  # Ensure this is a string
 					)
 					$command = "scrcpy -s $deviceSerial"
 					if ($useAndroid_11) {
@@ -297,6 +344,9 @@ try {
 						if ($dpi) { 
 							$command += "/$dpi" 
 						}
+					}
+					elseif ($displayId) {
+						$command += " --display-id=$displayId"  # Directly append as a string
 					}
 					if ($bitrate) { 
 						$command += " $bitrate" 
@@ -324,15 +374,17 @@ try {
 						-options $config.options `
 						-maxFps $config.maxFps `
 						-rotationLock $config.rotationLock
+					$batContent = "@echo off`n$scrcpyCommand"
 				} else {
-					$scrcpyCommand = "@echo off`n"
-					$scrcpyCommand += "adb -s $global:deviceSerial shell settings put global overlay_display_devices $($config.resolution)/$($config.dpi)`n"
-					$scrcpyCommand += 'for /f "tokens=2 delims==" %%a in (''scrcpy -s ' + $global:deviceSerial + ' --list-displays 2^>^&1 ^| find "--display-id"'') do (' + "`n"
-					$scrcpyCommand += '  for /f "tokens=1 delims= " %%b in ("%%a") do (' + "`n"
-					$scrcpyCommand += '    if not "%%b"=="0" ( set "DISPLAY_ID=%%b" )' + "`n"
-					$scrcpyCommand += '  )' + "`n"
-					$scrcpyCommand += ')' + "`n"
-					$scrcpyCommand += "if defined DISPLAY_ID ( " + (Build-ScrcpyCommand `
+					# Get the dynamic display ID
+					Get-DynamicDisplayId -serial $global:deviceSerial
+
+					# Validate and use the global variable
+					if (-not $global:dynamicDisplayID) {
+						throw "Could not determine a valid dynamic display ID."
+					}
+
+					$scrcpyCommand = Build-ScrcpyCommand `
 						-deviceSerial $global:deviceSerial `
 						-useAndroid_11 $false `
 						-resolution $null `
@@ -340,15 +392,20 @@ try {
 						-bitrate $config.bitrate `
 						-options $config.options `
 						-maxFps $config.maxFps `
-						-rotationLock $config.rotationLock) + " --display-id %DISPLAY_ID% ) else ( echo No valid display ID found. )`n"
-					$scrcpyCommand += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none"
+						-rotationLock $config.rotationLock `
+						-displayId $global:dynamicDisplayID
+
+					# Build the batch file with overlay creation, scrcpy, and reset
+					$batContent = "@echo off`n"
+					$batContent += "$scrcpyCommand`n"
+					$batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none"
 				}
 
 				# Save the command to a batch file
-				Set-Content -Path $scrcpyBatFilePath -Value $scrcpyCommand
+				Set-Content -Path $scrcpyBatFilePath -Value $batContent
 
 				# Execute the Scrcpy command
-				Write-Host "Executing Scrcpy command: $scrcpyCommand"
+				Write-Host "Executing Scrcpy command: $batContent"
 				$scrcpyProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$scrcpyBatFilePath`"" -NoNewWindow -PassThru -RedirectStandardError "scrcpy_error.log"
 
 				if (-not $scrcpyProcess.HasExited) {
@@ -367,7 +424,7 @@ try {
 			$response.OutputStream.Write($buffer, 0, $buffer.Length)
 			$response.Close()
 		}
-		
+				
         # Handle 404 for unknown paths
         else {
             $response.StatusCode = 404

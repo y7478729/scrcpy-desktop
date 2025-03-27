@@ -35,26 +35,47 @@ def get_device_ip(serial):
             return match.group(1)
     return None
 
-def get_display_id(serial):
-    """Get the non-zero display ID created by overlay_display_devices with retries"""
-    for _ in range(3):  # Retry up to 3 times
-        list_result = subprocess.run(['scrcpy', '-s', serial, '--list-displays'],
-                                   capture_output=True, text=True)
-        print(f"scrcpy --list-displays output: {list_result.stdout}")
-        print(f"scrcpy --list-displays error: {list_result.stderr}")
-        if list_result.returncode == 0:
-            # Parse lines for --display-id=<number>
-            for line in list_result.stdout.splitlines():
-                match = re.search(r'--display-id=(\d+)', line)
-                if match:
-                    display_id = int(match.group(1))
-                    if display_id != 0:  # Return the first non-zero ID
-                        print(f"Found display ID: {display_id}")
-                        return display_id
-        # Wait briefly before retrying in case the display is still registering
-        time.sleep(1)
-    print("No valid display ID found after retries")
-    return None
+def get_dynamic_display_id(serial):
+    """Get the dynamically created overlay display ID by comparing before and after states."""
+    
+    # Step 0: Reset overlays
+    reset_display(serial)
+    
+    # Step 1: List displays before creating overlay
+    initial_ids = []
+    initial_result = subprocess.run(['scrcpy', '-s', serial, '--list-displays'],
+                                    capture_output=True, text=True)
+    if initial_result.returncode == 0:
+        for line in initial_result.stdout.splitlines():
+            match = re.search(r'--display-id=(\d+)', line)
+            if match:
+                initial_ids.append(int(match.group(1)))
+
+    # Log the static display IDs
+    print(f"Static display IDs detected: {initial_ids}. These will be ignored.")
+
+    # Step 2: Create overlay display
+    subprocess.run(['adb', '-s', serial, 'shell', 'settings', 'put', 'global', 'overlay_display_devices', '1920x1080/160'])
+
+    # Step 3: List displays after creating overlay
+    updated_ids = []
+    updated_result = subprocess.run(['scrcpy', '-s', serial, '--list-displays'],
+                                    capture_output=True, text=True)
+    if updated_result.returncode == 0:
+        for line in updated_result.stdout.splitlines():
+            match = re.search(r'--display-id=(\d+)', line)
+            if match:
+                updated_ids.append(int(match.group(1)))
+
+    # Step 4: Identify the new display ID
+    new_ids = list(set(updated_ids) - set(initial_ids))
+    if not new_ids:
+        print("No new display ID found after creating overlay.")
+        return None
+
+    dynamic_display_id = new_ids[0]
+    print(f"Dynamic display ID detected: {dynamic_display_id}. Display ID selected: {dynamic_display_id}")
+    return dynamic_display_id
 
 @app.route('/detect-device', methods=['POST'])
 def detect_device():
@@ -163,16 +184,15 @@ def start_scrcpy():
         if resolution and dpi:
             # Set the overlay display
             subprocess.run(['adb', '-s', DEVICE_SERIAL, 'shell', 'settings', 'put', 'global', 'overlay_display_devices', f'{resolution}/{dpi}'])
-            # Give it a moment to register
-            time.sleep(1)
+
             # Get the correct display ID
-            display_id = get_display_id(DEVICE_SERIAL)
+            display_id = get_dynamic_display_id(DEVICE_SERIAL)
             if display_id is not None:
                 cmd.append(f'--display-id={display_id}')
             else:
                 return 'Error: Could not find a valid display ID', 500
             reset_needed = True  # Mark that we need to reset later
-    
+
     if bitrate:
         cmd.append(bitrate)
     if max_fps:
