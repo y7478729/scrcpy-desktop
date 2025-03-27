@@ -1,4 +1,11 @@
-scrcpy-desktop
+
+<div align="center">
+
+![scrcp-desktop](https://github.com/user-attachments/assets/747cac8e-9635-46d2-bbe1-3d6c04bfeb0a)
+
+</div>
+
+# scrcpy-desktop
 
 User-Friendly Scrcpy Frontend For Desktop
 
