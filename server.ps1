@@ -13,7 +13,7 @@ function Invoke-AdbCommand {
     param (
         [string]$command,
         [int]$timeoutSeconds = 5,
-        [string]$successPattern = "\bdevice\b"
+        [string]$successPattern = ""
     )
     Write-Host "Executing ADB command: $command"
     $startTime = Get-Date
@@ -122,8 +122,8 @@ function Detect-Device {
         if (-not $adbModelResult.Success) {
             throw "Failed to retrieve phone model: $($adbModelResult.Stderr)"
         }
-        $ipAddress = Get-DeviceIpAddress -serial $usbDevice
-        return @{ success = $true; model = $adbModelResult.Stdout.Trim(); serial = $usbDevice; ip = $ipAddress }
+		
+        return @{ success = $true; model = $adbModelResult.Stdout.Trim(); serial = $usbDevice; ip = $null } # IP will be null for USB
     }
     elseif ($mode -eq "wifi") {
         if (-not $ip) {
