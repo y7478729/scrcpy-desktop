@@ -190,7 +190,11 @@ function Connect-Device {
 
 # Function to get the dynamic display ID and set it globally
 function Get-DynamicDisplayId {
-    param ([string]$serial)
+    param (
+        [string]$serial,
+        [string]$resolution,
+        [string]$dpi
+    )
 
     # Reset overlays
     Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 -successPattern ""
@@ -207,8 +211,9 @@ function Get-DynamicDisplayId {
     }
     Write-Host "Static display IDs detected: $initialIds"
 
-    # Create overlay display
-    Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices 1920x1080/160" -timeoutSeconds 5 -successPattern ""
+    # Create overlay display with user-specified resolution and DPI
+    $overlaySetting = "$resolution/$dpi"
+    Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices $overlaySetting" -timeoutSeconds 5 -successPattern ""
 
     # List displays again
     $updatedResult = Invoke-AdbCommand "scrcpy -s $serial --list-displays" -timeoutSeconds 5 -successPattern "--display-id"
@@ -230,9 +235,8 @@ function Get-DynamicDisplayId {
     }
 
     $global:dynamicDisplayID = $newIds[0]
-    Write-Host "Dynamic display ID detected: $global:dynamicDisplayID"
+    Write-Host "Dynamic display ID detected: $global:dynamicDisplayID for $overlaySetting"
 }
-
 
 try {
     $listener.Start()
@@ -334,7 +338,7 @@ try {
 						[string[]]$options,
 						[string]$maxFps,
 						[string]$rotationLock,
-						[string]$displayId = $null  # Ensure this is a string
+						[string]$displayId = $null
 					)
 					$command = "scrcpy -s $deviceSerial"
 					if ($useAndroid_11) {
@@ -346,7 +350,7 @@ try {
 						}
 					}
 					elseif ($displayId) {
-						$command += " --display-id=$displayId"  # Directly append as a string
+						$command += " --display-id=$displayId"
 					}
 					if ($bitrate) { 
 						$command += " $bitrate" 
@@ -376,8 +380,8 @@ try {
 						-rotationLock $config.rotationLock
 					$batContent = "@echo off`n$scrcpyCommand"
 				} else {
-					# Get the dynamic display ID
-					Get-DynamicDisplayId -serial $global:deviceSerial
+					# Get the dynamic display ID with user-specified resolution and DPI
+					Get-DynamicDisplayId -serial $global:deviceSerial -resolution $config.resolution -dpi $config.dpi
 
 					# Validate and use the global variable
 					if (-not $global:dynamicDisplayID) {
