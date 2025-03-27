@@ -148,6 +148,8 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
 - **Virtual Display**: Ensure your Android device is running Android 11+ and that Scrcpy 3.x is installed to utilize virtual display mode and audio streaming.
 - **Cross-Platform Support**: The Flask-based method ensures compatibility across Windows, Linux, and macOS, making it the recommended approach.
 - **Legacy Support**: The PowerShell method is retained for Windows users who prefer not to install Python 3.9+.
+- Apps like Taskbar are needed to get desktop like launcher/mode on your android phone if your android system vendor didn't provide implemented desktop mode
+- ADB debugging needs to be enabled via developer tools(tapping on build number few times will enable this hidden option in About phone>Software Info section of your Settings app)
 
 ---
 
