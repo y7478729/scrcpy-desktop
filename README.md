@@ -19,12 +19,11 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
 ### Primary Method (Flask - Cross-Platform)
 - **Python 3.9 or newer**: Required for Flask dependencies.
 - **Scrcpy 3.x**: Installed and added to your system's PATH. Scrcpy 3.x is required to support virtual display mode for Android 11+ devices.
-- **ADB**: Installed and added to your system's PATH for device communication.
 - **Flask**: Automatically installed in a virtual environment when you run the provided scripts.
 
 ### Legacy Method (PowerShell - Windows Only)
 - **Windows 10 or newer**: PowerShell must be available.
-- **Scrcpy 3.x**: The `server.ps1` and `index.html` files must be placed inside the Scrcpy directory for this method to work.
+- **Scrcpy 3.x**: The `server.ps1` and `index.html` files must be placed inside the Scrcpy directory for this method to work or have adb and scrcpy in System Path.
 
 ---
 
@@ -34,7 +33,7 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
 1. **Clone or Download the Repository**:
    - Clone this repository or download the ZIP file.
      ```bash
-     git clone https://github.com/your-repo/scrcpy-desktop.git
+     git clone https://github.com/serifpersia/scrcpy-desktop.git
      ```
 2. **Install Dependencies**:
    - Ensure Python 3.9+ is installed. You can verify by running:
@@ -47,8 +46,59 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
      ```bash
      python3 --version
      ```
+   Installing Scrcpy via Package Managers
 
-   - Install Scrcpy and ADB, and ensure they are added to your system's PATH.
+   Most Linux distributions provide Scrcpy in their official repositories. Use your distribution's package manager to install it:
+   
+   Debian/Ubuntu-based distributions:
+   sudo apt update
+   sudo apt install scrcpy
+   
+   Fedora:
+    ```bash
+   sudo dnf install scrcpy
+    ```
+   Arch Linux/Manjaro:
+    ```bash
+   sudo pacman -S scrcpy
+    ```
+   Handling Older Versions of Scrcpy
+   If your distribution provides an outdated version of Scrcpy, you can download the latest release from official GitHub repository:
+   
+   1. Download the latest release tarball:
+      Scrcpy Releases: [scrcpy](https://github.com/Genymobile/scrcpy/releases)
+       ```bash
+       wget <scrcpy_release.tar>
+        ```
+   2. Extract the tarball:
+       ```bash
+      tar -xvzf <filename>.tar.gz
+       ```
+   3. Move the extracted binaries to a directory in your PATH (e.g., /usr/local/bin):
+       ```bash
+      sudo mv scrcpy /usr/local/bin/
+       ```
+   4. Verify the installation:
+       ```bash
+      scrcpy --version
+       ```
+   Installing Python Virtual Environment Support
+   To create and use virtual environments in Python, ensure the venv module is installed:
+   
+   Debian/Ubuntu-based distributions:
+    ```bash
+   sudo apt install python3-venv
+    ```
+   Fedora:
+    ```bash
+   sudo dnf install python3-virtualenv
+    ```
+   Arch Linux/Manjaro:
+    ```bash
+   sudo pacman -S python-virtualenv
+    ```
+
+   - Install Scrcpy, and ensure that its added to your system's PATH.
 3. **Run the Application**:
    - Use the provided `run.bat` (Windows) or `run.sh` (Linux/macOS) script to start the Flask server. These scripts will automatically create and activate a virtual environment, install Flask, and start the server.
      - On Linux/macOS, make the script executable if needed:
@@ -56,7 +106,6 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
        chmod +x run.sh
        ./run.sh
        ```
-
 ### Legacy Method (PowerShell - Windows 10 or newer only)
 1. **Extract Files**:
    - Extract `index.html` and `server.ps1` into your Scrcpy directory (where Scrcpy is installed).
@@ -66,8 +115,6 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
      Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
      ```
    - Confirm with "Y" when prompted.
-
----
 
 ## Usage
 
