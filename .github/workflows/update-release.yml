@@ -1,60 +1,59 @@
 name: Update Latest Release
 
+# Trigger the workflow manually
 on:
-  push:
-    branches:
-      - main # Trigger on pushes to the main branch
+  workflow_dispatch:
+
+# Permissions required to write to the repository contents
+permissions:
+  contents: write
 
 jobs:
   update-release:
     runs-on: ubuntu-latest
-
     steps:
-      # Step 1: Checkout the repository
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      # Step 2: Debug GH_PAT Secret
-      - name: Debug GH_PAT
-        run: |
-          if [ -z "${{ secrets.GH_PAT }}" ]; then
-            echo "GH_PAT is empty or not set."
-            exit 1 # Fail the workflow if GH_PAT is not set
-          else
-            echo "GH_PAT is set."
-          fi
-
-      # Step 3: Get the latest release or create one if it doesn't exist
-      - name: Get or Create Release
-        id: get_release
-        uses: softprops/action-gh-release@v1
+      # Checkout the repository code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
         with:
-          tag_name: latest
-          name: Latest Release
-          draft: false
-          prerelease: false
-          token: ${{ secrets.GH_PAT }} # Use the PAT instead of GITHUB_TOKEN
+          fetch-depth: 0  # Fetch all history to ensure we get the latest commit
 
-      # Step 4: Debug Upload URL
-      - name: Debug Upload URL
+      # Delete the existing "latest" release if it exists
+      - name: Delete Existing Latest Release
         run: |
-          echo "Upload URL: ${{ steps.get_release.outputs.upload_url }}"
-          if [ -z "${{ steps.get_release.outputs.upload_url }}" ]; then
-            echo "Upload URL is missing. Check the previous step for errors."
-            exit 1
+          # Check if the "latest" release exists and delete it
+          RELEASE_ID=$(gh release list --json id,name | jq -r '.[] | select(.name == "latest") | .id')
+          if [ -n "$RELEASE_ID" ]; then
+            gh release delete "latest" --yes
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 5: Archive the source code
-      - name: Archive source code
+      # Delete the existing "latest" tag if it exists
+      - name: Delete Existing Latest Tag
         run: |
-          git archive --format=zip --output=source-code.zip HEAD
+          # Check if the "latest" tag exists and delete it
+          if git rev-parse "latest" >/dev/null 2>&1; then
+            git tag -d "latest"
+            git push origin :refs/tags/latest
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 6: Upload the source code to the release
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: ./source-code.zip
-          asset_name: source-code.zip
-          asset_content_type: application/zip
-          token: ${{ secrets.GH_PAT }} # Explicitly use the PAT for authentication
+      # Create a new "latest" tag based on the latest commit
+      - name: Create New Latest Tag
+        run: |
+          git tag latest
+          git push origin latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Create a new release with the "latest" tag
+      - name: Create New Latest Release
+        run: |
+          gh release create "latest" \
+            --title "latest" \
+            --notes "Automatically updated release to the latest commit" \
+            --target ${{ github.sha }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
