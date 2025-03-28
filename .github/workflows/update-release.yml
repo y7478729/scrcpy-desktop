@@ -43,7 +43,7 @@ jobs:
       - name: Create New Latest Release
         run: |
           gh release create "latest" \
-            --title "Current Release" \
+            --title "latest" \
             --notes "Automatically updated to the latest commit on ${{ github.sha }}" \
             --target ${{ github.sha }}
         env:
