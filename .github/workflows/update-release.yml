@@ -14,7 +14,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Step 2: Get the latest release or create one if it doesn't exist
+      # Step 2: Debug GH_PAT Secret
+      - name: Debug GH_PAT
+        run: |
+          if [ -z "${{ secrets.GH_PAT }}" ]; then
+            echo "GH_PAT is empty or not set."
+            exit 1 # Fail the workflow if GH_PAT is not set
+          else
+            echo "GH_PAT is set."
+          fi
+
+      # Step 3: Get the latest release or create one if it doesn't exist
       - name: Get or Create Release
         id: get_release
         uses: softprops/action-gh-release@v1
@@ -25,12 +35,21 @@ jobs:
           prerelease: false
           token: ${{ secrets.GH_PAT }} # Use the PAT instead of GITHUB_TOKEN
 
-      # Step 3: Archive the source code
+      # Step 4: Debug Upload URL
+      - name: Debug Upload URL
+        run: |
+          echo "Upload URL: ${{ steps.get_release.outputs.upload_url }}"
+          if [ -z "${{ steps.get_release.outputs.upload_url }}" ]; then
+            echo "Upload URL is missing. Check the previous step for errors."
+            exit 1
+          fi
+
+      # Step 5: Archive the source code
       - name: Archive source code
         run: |
           git archive --format=zip --output=source-code.zip HEAD
 
-      # Step 4: Upload the source code to the release
+      # Step 6: Upload the source code to the release
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         with:
