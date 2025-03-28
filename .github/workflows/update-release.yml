@@ -57,3 +57,4 @@ jobs:
           asset_path: ./source-code.zip
           asset_name: source-code.zip
           asset_content_type: application/zip
+          token: ${{ secrets.GH_PAT }} # Explicitly use the PAT for authentication
