@@ -18,19 +18,22 @@ jobs:
       - name: Delete Existing Latest Release (Published and Draft)
         run: |
           echo "Checking for existing releases with tag 'latest'..."
+          # List all releases and check for any with tag 'latest'
+          RELEASES=$(gh release list --json tagName,isDraft,name --limit 100)
+
           # Check for published releases with tag 'latest'
-          PUBLISHED_RELEASE_ID=$(gh release list --json id,tagName,isDraft | jq -r '.[] | select(.tagName == "latest" and .isDraft == false) | .id')
-          if [ -n "$PUBLISHED_RELEASE_ID" ]; then
-            echo "Deleting published release with tag 'latest' (ID: $PUBLISHED_RELEASE_ID)..."
+          PUBLISHED_EXISTS=$(echo "$RELEASES" | jq -r '.[] | select(.tagName == "latest" and .isDraft == false) | .tagName')
+          if [ -n "$PUBLISHED_EXISTS" ]; then
+            echo "Deleting published release with tag 'latest'..."
             gh release delete "latest" --yes
           else
             echo "No published release with tag 'latest' found."
           fi
 
           # Check for draft releases with tag 'latest'
-          DRAFT_RELEASE_ID=$(gh release list --json id,tagName,isDraft | jq -r '.[] | select(.tagName == "latest" and .isDraft == true) | .id')
-          if [ -n "$DRAFT_RELEASE_ID" ]; then
-            echo "Deleting draft release with tag 'latest' (ID: $DRAFT_RELEASE_ID)..."
+          DRAFT_EXISTS=$(echo "$RELEASES" | jq -r '.[] | select(.tagName == "latest" and .isDraft == true) | .tagName')
+          if [ -n "$DRAFT_EXISTS" ]; then
+            echo "Deleting draft release with tag 'latest'..."
             gh release delete "latest" --yes
           else
             echo "No draft release with tag 'latest' found."
