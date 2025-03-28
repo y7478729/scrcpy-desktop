@@ -15,26 +15,45 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Delete Existing Latest Release
+      - name: Delete Existing Latest Release (Published and Draft)
         run: |
-          RELEASE_ID=$(gh release list --json id,name | jq -r '.[] | select(.name == "latest") | .id')
-          if [ -n "$RELEASE_ID" ]; then
+          echo "Checking for existing releases with tag 'latest'..."
+          # Check for published releases with tag 'latest'
+          PUBLISHED_RELEASE_ID=$(gh release list --json id,tagName,isDraft | jq -r '.[] | select(.tagName == "latest" and .isDraft == false) | .id')
+          if [ -n "$PUBLISHED_RELEASE_ID" ]; then
+            echo "Deleting published release with tag 'latest' (ID: $PUBLISHED_RELEASE_ID)..."
             gh release delete "latest" --yes
+          else
+            echo "No published release with tag 'latest' found."
+          fi
+
+          # Check for draft releases with tag 'latest'
+          DRAFT_RELEASE_ID=$(gh release list --json id,tagName,isDraft | jq -r '.[] | select(.tagName == "latest" and .isDraft == true) | .id')
+          if [ -n "$DRAFT_RELEASE_ID" ]; then
+            echo "Deleting draft release with tag 'latest' (ID: $DRAFT_RELEASE_ID)..."
+            gh release delete "latest" --yes
+          else
+            echo "No draft release with tag 'latest' found."
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Delete Existing Latest Tag
         run: |
+          echo "Checking for existing tag 'latest'..."
           if git rev-parse "latest" >/dev/null 2>&1; then
+            echo "Deleting tag 'latest'..."
             git tag -d "latest"
             git push origin :refs/tags/latest
+          else
+            echo "No tag 'latest' found."
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create New Latest Tag
         run: |
+          echo "Creating new tag 'latest'..."
           git tag latest
           git push origin latest
         env:
@@ -42,8 +61,9 @@ jobs:
 
       - name: Create New Latest Release
         run: |
+          echo "Creating new release with tag 'latest'..."
           gh release create "latest" \
-            --title "latest" \
+            --title "Current Release" \
             --notes "Automatically updated to the latest commit on ${{ github.sha }}" \
             --target ${{ github.sha }}
         env:
