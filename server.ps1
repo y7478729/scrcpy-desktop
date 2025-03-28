@@ -238,6 +238,20 @@ function Get-DynamicDisplayId {
     Write-Host "Dynamic display ID detected: $global:dynamicDisplayID for $overlaySetting"
 }
 
+# Function to reset display settings (size, density, and overlays)
+function Reset-Display {
+    param (
+        [string]$serial
+    )
+    Write-Host "Resetting display settings for device: $serial"
+    # Reset overlay display
+    Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 -successPattern ""
+    # Reset screen size
+    Invoke-AdbCommand "adb -s $serial shell wm size reset" -timeoutSeconds 5 -successPattern ""
+    # Reset screen density
+    Invoke-AdbCommand "adb -s $serial shell wm density reset" -timeoutSeconds 5 -successPattern ""
+}
+
 try {
     $listener.Start()
     Write-Host "Server running on http://localhost:$port/"
@@ -317,7 +331,8 @@ try {
             $response.OutputStream.Write($buffer, 0, $buffer.Length)
             $response.Close()
         }
-
+		
+		# Handle /start-scrcpy endpoint
 		elseif ($request.Url.LocalPath -eq "/start-scrcpy") {
 			$response.ContentType = "text/plain"
 			try {
@@ -331,7 +346,8 @@ try {
 				function Build-ScrcpyCommand {
 					param (
 						[string]$deviceSerial,
-						[bool]$useAndroid_11,
+						[bool]$useVirtualDisplay,
+						[bool]$useNativeTaskbar,
 						[string]$resolution,
 						[string]$dpi,
 						[string]$bitrate,
@@ -341,7 +357,7 @@ try {
 						[string]$displayId = $null
 					)
 					$command = "scrcpy -s $deviceSerial"
-					if ($useAndroid_11) {
+					if ($useVirtualDisplay) {
 						if ($resolution) { 
 							$command += " --new-display=$resolution" 
 						}
@@ -349,8 +365,23 @@ try {
 							$command += "/$dpi" 
 						}
 					}
+					elseif ($useNativeTaskbar) {
+						if ($resolution) {
+							$width, $height = $resolution -split 'x'
+							$calculatedDpi = [math]::Round(0.2667 * [int]$height)
+							Write-Host "Calculated DPI: $calculatedDpi for resolution: $resolution"
+							
+							# Set screen size and density
+							Invoke-AdbCommand "adb -s $deviceSerial shell wm size $resolution" -timeoutSeconds 5 -successPattern ""
+							Invoke-AdbCommand "adb -s $deviceSerial shell wm density $calculatedDpi" -timeoutSeconds 5 -successPattern ""
+							
+							$command += " --display-id=0"
+						}
+						$resetNeeded = $true
+					}
 					elseif ($displayId) {
 						$command += " --display-id=$displayId"
+						$resetNeeded = $true
 					}
 					if ($bitrate) { 
 						$command += " $bitrate" 
@@ -364,54 +395,59 @@ try {
 					if ($rotationLock) { 
 						$command += " $rotationLock" 
 					}
-					return $command
+					return @{ Command = $command; ResetNeeded = $resetNeeded }
 				}
 
 				# Construct the Scrcpy command dynamically
-				if ($config.useAndroid_11) {
-					$scrcpyCommand = Build-ScrcpyCommand `
+				if ($config.useVirtualDisplay) {
+					$scrcpyCommandInfo = Build-ScrcpyCommand `
 						-deviceSerial $global:deviceSerial `
-						-useAndroid_11 $true `
+						-useVirtualDisplay $true `
 						-resolution $config.resolution `
 						-dpi $config.dpi `
 						-bitrate $config.bitrate `
 						-options $config.options `
 						-maxFps $config.maxFps `
 						-rotationLock $config.rotationLock
-					$batContent = "@echo off`n$scrcpyCommand"
-				} else {
-					# Get the dynamic display ID with user-specified resolution and DPI
-					Get-DynamicDisplayId -serial $global:deviceSerial -resolution $config.resolution -dpi $config.dpi
-
-					# Validate and use the global variable
-					if (-not $global:dynamicDisplayID) {
-						throw "Could not determine a valid dynamic display ID."
-					}
-
-					$scrcpyCommand = Build-ScrcpyCommand `
+				}
+				elseif ($config.useNativeTaskbar) {
+					$scrcpyCommandInfo = Build-ScrcpyCommand `
 						-deviceSerial $global:deviceSerial `
-						-useAndroid_11 $false `
-						-resolution $null `
-						-dpi $null `
+						-useNativeTaskbar $true `
+						-resolution $config.resolution `
 						-bitrate $config.bitrate `
 						-options $config.options `
 						-maxFps $config.maxFps `
-						-rotationLock $config.rotationLock `
-						-displayId $global:dynamicDisplayID
-
-					# Build the batch file with overlay creation, scrcpy, and reset
-					$batContent = "@echo off`n"
-					$batContent += "$scrcpyCommand`n"
-					$batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none"
+						-rotationLock $config.rotationLock
+				}
+				else {
+					# Get the dynamic display ID with user-specified resolution and DPI
+					Get-DynamicDisplayId -serial $global:deviceSerial -resolution $config.resolution -dpi $config.dpi
+					if (-not $global:dynamicDisplayID) {
+						throw "Could not determine a valid dynamic display ID."
+					}
+					$scrcpyCommandInfo = Build-ScrcpyCommand `
+						-deviceSerial $global:deviceSerial `
+						-displayId $global:dynamicDisplayID `
+						-bitrate $config.bitrate `
+						-options $config.options `
+						-maxFps $config.maxFps `
+						-rotationLock $config.rotationLock
 				}
 
 				# Save the command to a batch file
+				$batContent = "@echo off`n"
+				$batContent += "$($scrcpyCommandInfo.Command)`n"
+				if ($scrcpyCommandInfo.ResetNeeded) {
+					$batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`n"
+					$batContent += "adb -s $global:deviceSerial shell wm size reset`n"
+					$batContent += "adb -s $global:deviceSerial shell wm density reset`n"
+				}
 				Set-Content -Path $scrcpyBatFilePath -Value $batContent
 
 				# Execute the Scrcpy command
 				Write-Host "Executing Scrcpy command: $batContent"
 				$scrcpyProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$scrcpyBatFilePath`"" -NoNewWindow -PassThru -RedirectStandardError "scrcpy_error.log"
-
 				if (-not $scrcpyProcess.HasExited) {
 					Write-Host "Scrcpy started successfully with PID: $($scrcpyProcess.Id)"
 					$buffer = [System.Text.Encoding]::UTF8.GetBytes("Scrcpy Desktop is running!")

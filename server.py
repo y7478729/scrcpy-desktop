@@ -166,6 +166,14 @@ def reset_display(serial):
     cmd = ['adb', '-s', serial, 'shell', 'settings', 'put', 'global', 'overlay_display_devices', 'none']
     print(f"Server Executing: {' '.join(cmd)}")
     subprocess.run(cmd)
+    
+    cmd = ['adb', '-s', serial, 'shell', 'wm', 'size', 'reset']
+    print(f"Server Executing: {' '.join(cmd)}")
+    subprocess.run(cmd)
+    
+    cmd = ['adb', '-s', serial, 'shell','wm', 'density', 'reset']
+    print(f"Server Executing: {' '.join(cmd)}")
+    subprocess.run(cmd)
 
 def run_scrcpy_with_reset(cmd, serial, reset_needed):
     """Run scrcpy and reset display when it exits if needed"""
@@ -235,16 +243,34 @@ def start_scrcpy():
     max_fps = data.get('maxFps')
     rotation_lock = data.get('rotationLock')
     options = data.get('options', [])
-    use_android_11 = data.get('useAndroid_11', False)
+    useVirtualDisplay = data.get('useVirtualDisplay', False)
+    useNativeTaskbar = data.get('useNativeTaskbar', False)
 
     cmd = ['scrcpy', '-s', DEVICE_SERIAL]
     reset_needed = False
 
-    if use_android_11:
+    if useVirtualDisplay:
         if resolution:
             cmd.append(f'--new-display={resolution}/{dpi or "160"}')
     else:
-        if resolution and dpi:
+        if useNativeTaskbar:
+            if resolution:
+                width, height = map(int, resolution.split('x'))  # Extract width and height
+                dpi = round(0.2667 * height)  # Calculate DPI based on screen height
+                
+                wm_size_cmd = ['adb', '-s', DEVICE_SERIAL, 'shell', 'wm', 'size', resolution]
+                print(f"Server Executing: {' '.join(wm_size_cmd)}")
+                subprocess.run(wm_size_cmd)
+                
+                wm_dpi_cmd = ['adb', '-s', DEVICE_SERIAL, 'shell', 'wm', 'density', str(dpi)]
+                print(f"Server Executing: {' '.join(wm_dpi_cmd)}")
+                subprocess.run(wm_dpi_cmd)
+    
+                cmd.append(f'--display-id=0')
+                
+            reset_needed = True
+            
+        elif resolution and dpi:
             # Get the dynamic display ID for the user-specified resolution and DPI
             display_id = get_dynamic_display_id(DEVICE_SERIAL, resolution, dpi)
             

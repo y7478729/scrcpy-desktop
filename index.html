@@ -266,8 +266,10 @@
             <label for="noAudio">No Audio</label>
             <input type="checkbox" id="fullscreen" value="-f">
             <label for="fullscreen">Fullscreen</label>
-            <input type="checkbox" id="useAndroid_11" checked>
-            <label for="useAndroid_11">Android 11+ Mode</label>
+            <input type="checkbox" id="useVirtualDisplay" checked>
+            <label for="useVirtualDisplay">Virtual Display</label>
+            <input type="checkbox" id="useNativeTaskbar">
+            <label for="useNativeTaskbar">Native Taskbar (Android 12+)</label>
             <input type="checkbox" id="noControl" value="--no-control">
             <label for="noControl">No Control</label>
             <input type="checkbox" id="disablePowerButton" value="--power-off-on-close">
@@ -309,20 +311,71 @@
             }
         }
 
-        document.getElementById("useAndroid_11").addEventListener("change", function() {
-            const noAudioCheckbox = document.getElementById("noAudio");
-            const noAudioLabel = document.querySelector("label[for='noAudio']");
-            if (this.checked) {
-                noAudioCheckbox.disabled = false;
-                noAudioLabel.style.opacity = "1";
-            } else {
-                noAudioCheckbox.disabled = true;
-                noAudioCheckbox.checked = false;
-                noAudioLabel.style.opacity = "0.5";
-            }
-        });
+document.getElementById("useVirtualDisplay").addEventListener("change", function() {
+    const nouseNativeTaskbarCheckbox = document.getElementById("useNativeTaskbar");
+    const nouseNativeTaskbarLabel = document.querySelector("label[for='useNativeTaskbar']");
+    
+    if (this.checked) {
+        nouseNativeTaskbarCheckbox.disabled = true;
+        nouseNativeTaskbarLabel.style.opacity = "0.5";
+    } else {
+        nouseNativeTaskbarCheckbox.disabled = false;
+        nouseNativeTaskbarCheckbox.checked = false;
+        nouseNativeTaskbarLabel.style.opacity = "1";
+    }
+});
 
-        document.getElementById("useAndroid_11").dispatchEvent(new Event("change"));
+document.getElementById("useNativeTaskbar").addEventListener("change", function() {
+    const nouseVirtualDisplayCheckbox = document.getElementById("useVirtualDisplay");
+    const nouseVirtualDisplayLabel = document.querySelector("label[for='useVirtualDisplay']");
+    
+    if (this.checked) {
+        nouseVirtualDisplayCheckbox.disabled = true;
+        nouseVirtualDisplayLabel.style.opacity = "0.5";
+    } else {
+        nouseVirtualDisplayCheckbox.disabled = false;
+        nouseVirtualDisplayCheckbox.checked = false;
+        nouseVirtualDisplayLabel.style.opacity = "1";
+    }
+});
+
+		document.getElementById("noControl").addEventListener("change", function() {
+			const turnScreenOffCheckbox = document.getElementById("turnScreenOff");
+			const disablePowerButtonCheckbox = document.getElementById("disablePowerButton");
+
+			if (this.checked) {
+				turnScreenOffCheckbox.disabled = true;
+				disablePowerButtonCheckbox.disabled = true;
+				turnScreenOffCheckbox.checked = false;  // Optionally uncheck these options
+				disablePowerButtonCheckbox.checked = false;
+				
+				document.querySelector("label[for='turnScreenOff']").style.opacity = "0.5";
+				document.querySelector("label[for='disablePowerButton']").style.opacity = "0.5";
+			} else {
+				turnScreenOffCheckbox.disabled = false;
+				disablePowerButtonCheckbox.disabled = false;
+				
+				document.querySelector("label[for='turnScreenOff']").style.opacity = "1";
+				document.querySelector("label[for='disablePowerButton']").style.opacity = "1";
+			}
+		});
+
+		window.addEventListener("DOMContentLoaded", () => {
+			const useVirtualDisplay = document.getElementById("useVirtualDisplay");
+			if (useVirtualDisplay.checked) {
+				useVirtualDisplay.dispatchEvent(new Event("change"));
+			}
+
+			const useNativeTaskbar = document.getElementById("useNativeTaskbar");
+			if (useNativeTaskbar.checked) {
+				useNativeTaskbar.dispatchEvent(new Event("change"));
+			}
+
+			const noControl = document.getElementById("noControl");
+			if (noControl.checked) {
+				noControl.dispatchEvent(new Event("change"));
+			}
+		});
 
         async function startScrcpy() {
             const startButton = document.getElementById("startButton");
@@ -370,8 +423,9 @@
                 const bitrate = document.getElementById("customBitrate").value.trim() ? `-b ${document.getElementById("customBitrate").value}M` : document.getElementById("bitrate").value;
                 const maxFps = document.getElementById("maxFps").value;
                 const rotationLock = document.getElementById("rotationLock").value;
-                const options = Array.from(document.querySelectorAll(".checkbox-group input:checked:not(#useAndroid_11)")).map(input => input.value);
-                const useAndroid_11 = document.getElementById("useAndroid_11").checked;
+                const options = Array.from(document.querySelectorAll(".checkbox-group input:checked:not(#useVirtualDisplay):not(#useNativeTaskbar)")).map(input => input.value);
+                const useVirtualDisplay = document.getElementById("useVirtualDisplay").checked;
+				const useNativeTaskbar = document.getElementById("useNativeTaskbar").checked;
 
                 const scrcpyConfig = {
                     mode,
@@ -381,7 +435,8 @@
                     maxFps,
                     rotationLock,
                     options,
-                    useAndroid_11
+                    useVirtualDisplay,
+					useNativeTaskbar
                 };
                 console.log(scrcpyConfig);
 
