@@ -1,0 +1,40 @@
+name: Update Latest Release
+
+on:
+  push:
+    branches:
+      - main # Trigger on pushes to the main branch
+
+jobs:
+  update-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: Get the latest release or create one if it doesn't exist
+      - name: Get or Create Release
+        id: get_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: Latest Release
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 3: Archive the source code
+      - name: Archive source code
+        run: |
+          git archive --format=zip --output=source-code.zip HEAD
+
+      # Step 4: Upload the source code to the release
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.get_release.outputs.upload_url }}
+          asset_path: ./source-code.zip
+          asset_name: source-code.zip
+          asset_content_type: application/zip
