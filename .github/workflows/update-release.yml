@@ -23,7 +23,7 @@ jobs:
           name: Latest Release
           draft: false
           prerelease: false
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT }} # Use the PAT instead of GITHUB_TOKEN
 
       # Step 3: Archive the source code
       - name: Archive source code
