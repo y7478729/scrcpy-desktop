@@ -1,10 +1,8 @@
 name: Update Latest Release
 
-# Trigger the workflow manually
 on:
   workflow_dispatch:
 
-# Permissions required to write to the repository contents
 permissions:
   contents: write
 
@@ -12,16 +10,13 @@ jobs:
   update-release:
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository code
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch all history to ensure we get the latest commit
+          fetch-depth: 0
 
-      # Delete the existing "latest" release if it exists
       - name: Delete Existing Latest Release
         run: |
-          # Check if the "latest" release exists and delete it
           RELEASE_ID=$(gh release list --json id,name | jq -r '.[] | select(.name == "latest") | .id')
           if [ -n "$RELEASE_ID" ]; then
             gh release delete "latest" --yes
@@ -29,10 +24,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Delete the existing "latest" tag if it exists
       - name: Delete Existing Latest Tag
         run: |
-          # Check if the "latest" tag exists and delete it
           if git rev-parse "latest" >/dev/null 2>&1; then
             git tag -d "latest"
             git push origin :refs/tags/latest
@@ -40,7 +33,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Create a new "latest" tag based on the latest commit
       - name: Create New Latest Tag
         run: |
           git tag latest
@@ -48,12 +40,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Create a new release with the "latest" tag
       - name: Create New Latest Release
         run: |
           gh release create "latest" \
-            --title "latest" \
-            --notes "Automatically updated release to the latest commit" \
+            --title "Current Release" \
+            --notes "Automatically updated to the latest commit on ${{ github.sha }}" \
             --target ${{ github.sha }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
