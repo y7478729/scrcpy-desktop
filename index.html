@@ -260,8 +260,12 @@
         </select>
         <label>Additional Options:</label>
         <div class="checkbox-group">
+            <input type="checkbox" id="noPowerOn" value="--no-power-on">
+            <label for="noPowerOn">No Power On</label>
             <input type="checkbox" id="turnScreenOff" value="--turn-screen-off" checked>
             <label for="turnScreenOff">Turn Screen Off</label>
+            <input type="checkbox" id="powerOffOnClose" value="--power-off-on-close">
+            <label for="powerOffOnClose">Power Off On Close</label>
             <input type="checkbox" id="noAudio" value="--no-audio">
             <label for="noAudio">No Audio</label>
             <input type="checkbox" id="fullscreen" value="-f">
@@ -272,8 +276,6 @@
             <label for="useNativeTaskbar">Native Taskbar (Android 12+)</label>
             <input type="checkbox" id="noControl" value="--no-control">
             <label for="noControl">No Control</label>
-            <input type="checkbox" id="disablePowerButton" value="--power-off-on-close">
-            <label for="disablePowerButton">Disable Power Button</label>
         </div>
         <button id="startButton" onclick="startScrcpy()">
             Start

@@ -238,18 +238,17 @@ function Get-DynamicDisplayId {
     Write-Host "Dynamic display ID detected: $global:dynamicDisplayID for $overlaySetting"
 }
 
-# Function to reset display settings (size, density, and overlays)
+# Function to reset display settings (overlays, size, density, and rotation)
 function Reset-Display {
     param (
         [string]$serial
     )
     Write-Host "Resetting display settings for device: $serial"
-    # Reset overlay display
+	
     Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 -successPattern ""
-    # Reset screen size
     Invoke-AdbCommand "adb -s $serial shell wm size reset" -timeoutSeconds 5 -successPattern ""
-    # Reset screen density
     Invoke-AdbCommand "adb -s $serial shell wm density reset" -timeoutSeconds 5 -successPattern ""
+    Invoke-AdbCommand "adb -s $serial shell settings put system user_rotation 0" -timeoutSeconds 5 -successPattern ""
 }
 
 try {
@@ -357,6 +356,15 @@ try {
 						[string]$displayId = $null
 					)
 					$command = "scrcpy -s $deviceSerial"
+					
+					# Handle power-related options
+					$powerOptions = @("--no-power-on", "--turn-screen-off", "--power-off-on-close")
+					foreach ($opt in $powerOptions) {
+						if ($options -contains $opt) {
+							$command += " $opt"
+						}
+					}
+
 					if ($useVirtualDisplay) {
 						if ($resolution) { 
 							$command += " --new-display=$resolution" 
@@ -368,13 +376,15 @@ try {
 					elseif ($useNativeTaskbar) {
 						if ($resolution) {
 							$width, $height = $resolution -split 'x'
-							$calculatedDpi = [math]::Round(0.2667 * [int]$height)
-							Write-Host "Calculated DPI: $calculatedDpi for resolution: $resolution"
+							$swappedResolution = "$height" + "x" + "$width"  # Swap width and height
+							Write-Host "Swapped resolution for native taskbar: $swappedResolution"
 							
 							# Set screen size and density
-							Invoke-AdbCommand "adb -s $deviceSerial shell wm size $resolution" -timeoutSeconds 5 -successPattern ""
+							Invoke-AdbCommand "adb -s $deviceSerial shell wm size $swappedResolution" -timeoutSeconds 5 -successPattern ""
+							$calculatedDpi = [math]::Round(0.2667 * [int]$height)
+							Write-Host "Calculated DPI: $calculatedDpi for resolution: $resolution"
 							Invoke-AdbCommand "adb -s $deviceSerial shell wm density $calculatedDpi" -timeoutSeconds 5 -successPattern ""
-							
+							Invoke-AdbCommand "adb -s $deviceSerial shell settings put system user_rotation 1" -timeoutSeconds 5 -successPattern ""
 							$command += " --display-id=0"
 						}
 						$resetNeeded = $true
@@ -383,6 +393,7 @@ try {
 						$command += " --display-id=$displayId"
 						$resetNeeded = $true
 					}
+					
 					if ($bitrate) { 
 						$command += " $bitrate" 
 					}
@@ -395,6 +406,7 @@ try {
 					if ($rotationLock) { 
 						$command += " $rotationLock" 
 					}
+					
 					return @{ Command = $command; ResetNeeded = $resetNeeded }
 				}
 
@@ -442,6 +454,7 @@ try {
 					$batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`n"
 					$batContent += "adb -s $global:deviceSerial shell wm size reset`n"
 					$batContent += "adb -s $global:deviceSerial shell wm density reset`n"
+					$batContent += "adb -s $global:deviceSerial shell settings put system user_rotation 0`n"
 				}
 				Set-Content -Path $scrcpyBatFilePath -Value $batContent
 

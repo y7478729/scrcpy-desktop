@@ -174,6 +174,10 @@ def reset_display(serial):
     cmd = ['adb', '-s', serial, 'shell','wm', 'density', 'reset']
     print(f"Server Executing: {' '.join(cmd)}")
     subprocess.run(cmd)
+    
+    cmd = ['adb', '-s', serial, 'shell', 'settings', 'put', 'system', 'user_rotation', '0']
+    print(f"Server Executing: {' '.join(cmd)}")
+    subprocess.run(cmd)
 
 def run_scrcpy_with_reset(cmd, serial, reset_needed):
     """Run scrcpy and reset display when it exits if needed"""
@@ -228,7 +232,6 @@ def get_dynamic_display_id(serial, resolution, dpi):
     dynamic_display_id = new_ids[0]
     print(f"Dynamic display ID detected: {dynamic_display_id} for {overlay_setting}. Display ID selected: {dynamic_display_id}")
     return dynamic_display_id
-
 @app.route('/start-scrcpy', methods=['POST'])
 def start_scrcpy():
     """Start scrcpy with provided config"""
@@ -249,47 +252,82 @@ def start_scrcpy():
     cmd = ['scrcpy', '-s', DEVICE_SERIAL]
     reset_needed = False
 
+    # Handle power-related options
+    power_options = {
+        '--no-power-on': False,
+        '--turn-screen-off': False,
+        '--power-off-on-close': False
+    }
+    
+    # Update power options based on received options
+    for opt in options:
+        if opt in power_options:
+            power_options[opt] = True
+
     if useVirtualDisplay:
         if resolution:
             cmd.append(f'--new-display={resolution}/{dpi or "160"}')
     else:
         if useNativeTaskbar:
             if resolution:
-                width, height = map(int, resolution.split('x'))  # Extract width and height
-                dpi = round(0.2667 * height)  # Calculate DPI based on screen height
+                width, height = map(int, resolution.split('x'))
+                swapped_resolution = f"{height}x{width}"
                 
-                wm_size_cmd = ['adb', '-s', DEVICE_SERIAL, 'shell', 'wm', 'size', resolution]
+                wm_size_cmd = ['adb', '-s', DEVICE_SERIAL, 'shell', 'wm', 'size', swapped_resolution]
                 print(f"Server Executing: {' '.join(wm_size_cmd)}")
                 subprocess.run(wm_size_cmd)
                 
+            if dpi:
+                try:
+                    dpi = int(dpi)
+                except ValueError:
+                    print(f"Invalid DPI value: {dpi}. Using default DPI.")
+                    dpi = 160
+
+                max_dpi = round(0.2667 * height)
+                if dpi > max_dpi:
+                    print(f"User-provided DPI ({dpi}) exceeds max allowed DPI ({max_dpi}). Using max DPI: {max_dpi}")
+                    dpi = max_dpi
+                    
                 wm_dpi_cmd = ['adb', '-s', DEVICE_SERIAL, 'shell', 'wm', 'density', str(dpi)]
                 print(f"Server Executing: {' '.join(wm_dpi_cmd)}")
                 subprocess.run(wm_dpi_cmd)
+                
+                wm_rotation_cmd = ['adb', '-s', DEVICE_SERIAL, 'shell', 'settings', 'put', 'system', 'user_rotation', '1']
+                print(f"Server Executing: {' '.join(wm_rotation_cmd)}")
+                subprocess.run(wm_rotation_cmd)
     
                 cmd.append(f'--display-id=0')
                 
             reset_needed = True
             
         elif resolution and dpi:
-            # Get the dynamic display ID for the user-specified resolution and DPI
             display_id = get_dynamic_display_id(DEVICE_SERIAL, resolution, dpi)
-            
             if display_id is not None:
                 cmd.append(f'--display-id={display_id}')
             else:
                 return 'Error: Could not find a valid display ID', 500
-            reset_needed = True  # Mark that we need to reset later
+            reset_needed = True
 
     if bitrate:
         cmd.append(bitrate)
     if max_fps:
         cmd.append(max_fps)
-    if rotation_lock:
+    if rotation_lock and not useNativeTaskbar:
         cmd.append(rotation_lock)
-    cmd.extend(options)
+
+    # Add power-related options to command
+    for opt, enabled in power_options.items():
+        if enabled:
+            cmd.append(opt)
+
+    # Add remaining options (excluding power options we've already handled)
+    for opt in options:
+        if opt not in power_options:
+            cmd.append(opt)
 
     try:
-        # Run scrcpy in a background thread to avoid blocking Flask
+        print(f"Executing scrcpy command: {' '.join(cmd)}")
         thread = threading.Thread(target=run_scrcpy_with_reset, args=(cmd, DEVICE_SERIAL, reset_needed))
         thread.start()
         return 'Scrcpy Desktop is running!'
