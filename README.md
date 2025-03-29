@@ -150,7 +150,7 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
 - **Legacy Support**: The PowerShell method is retained for Windows users who prefer not to install Python 3.9+.
 - Apps like Taskbar are needed to get desktop like launcher/mode on your android phone if your android system vendor didn't provide implemented desktop mode
 - ADB debugging needs to be enabled via developer tools(tapping on build number few times will enable this hidden option in About phone>Software Info section of your Settings app)
-- Forced Desktop Mode is required for options non Virtual Display and default, for native taskbar option you would need at least android 12 and android 13 to get app drawer on taskbar
+- Forced Desktop Mode is required for options Virtual Display and default, for native taskbar option you would need at least android 12 and android 13 to get app drawer on taskbar
 - Native taskbar option is recommended if you don't want to mess with force desktop mode and 3rd party launchers for desktop experience
 
 ---
