@@ -277,10 +277,14 @@
             <input type="checkbox" id="noControl" value="--no-control">
             <label for="noControl">No Control</label>
         </div>
-        <button id="startButton" onclick="startScrcpy()">
-            Start
-            <span id="spinner" class="spinner" style="display: none;"></span>
-        </button>
+		<button id="startButton" onclick="startScrcpy()">
+			Start
+			<span id="spinner" class="spinner" style="display: none;"></span>
+		</button>
+		<button id="updateButton" onclick="updateApp()">
+			Update
+			<span id="updateSpinner" class="spinner" style="display: none;"></span>
+		</button>
         <div id="scriptContainer" style="display: none;">
             <div style="cursor: pointer;" onclick="toggleScript()">Script</div>
             <pre id="command"></pre>
@@ -457,6 +461,34 @@ document.getElementById("useNativeTaskbar").addEventListener("change", function(
                 startButton.classList.remove("button-disabled");
             }
         }
+		
+		async function updateApp() {
+		
+		const updateButton = document.getElementById("updateButton");
+		const updateSpinner = document.getElementById("updateSpinner");
+		updateButton.disabled = true;
+		updateButton.classList.add("button-disabled");
+		updateSpinner.style.display = "inline-block";
+
+		try {
+			const response = await fetch('/update-app', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({})
+			});
+			const result = await response.text();
+			setStatus(result, !result.includes("Error"));
+			if (!result.includes("Error")) {
+				setTimeout(() => window.location.reload(), 2000); // Reload page after update
+			}
+		} catch (error) {
+			setStatus(`Error: ${error.message}`, false);
+		} finally {
+			updateSpinner.style.display = "none";
+			updateButton.disabled = false;
+			updateButton.classList.remove("button-disabled");
+		}
+	}
     </script>
 </body>
 </html>

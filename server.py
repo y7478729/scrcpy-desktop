@@ -5,6 +5,11 @@ import re
 import threading
 import time
 
+import requests
+import zipfile
+import io
+import shutil
+
 app = Flask(__name__, static_folder='.', static_url_path='')
 PORT = 8000
 DEVICE_SERIAL = None  # Global variable to track device serial
@@ -334,6 +339,51 @@ def start_scrcpy():
     except Exception as e:
         return f'Error: {str(e)}', 500
 
+@app.route('/update-app', methods=['POST'])
+def update_app():
+    try:
+        repo_owner = "serifpersia"
+        repo_name = "scrcpy-desktop"
+        api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
+        
+        # Fetch the latest release
+        response = requests.get(api_url)
+        response.raise_for_status()
+        release_data = response.json()
+        
+        # Use the tag to get the source code ZIP
+        tag = release_data["tag_name"]
+        zip_url = f"https://github.com/{repo_owner}/{repo_name}/archive/refs/tags/{tag}.zip"
+        print(f"Downloading source code ZIP from {zip_url}")
+        
+        # Download the release ZIP
+        zip_response = requests.get(zip_url)
+        zip_response.raise_for_status()
+        
+        # Extract the ZIP contents
+        with zipfile.ZipFile(io.BytesIO(zip_response.content)) as z:
+            z.extractall("temp_update_dir")
+        
+        # Get the extracted subdirectory (e.g., scrcpy-desktop-latest)
+        temp_dir = os.path.join("temp_update_dir", os.listdir("temp_update_dir")[0])
+        print(f"Extracted directory: {temp_dir}")
+        # Optionally list files for debugging
+        for root, dirs, files in os.walk(temp_dir):
+            for file in files:
+                print(f"  - {os.path.join(root, file)}")
+        
+        # Replace current files
+        shutil.copy(os.path.join(temp_dir, "index.html"), "index.html")
+        shutil.copy(os.path.join(temp_dir, "server.py"), "server.py")
+        shutil.copy(os.path.join(temp_dir, "server.ps1"), "server.ps1")
+        
+        # Clean up
+        shutil.rmtree("temp_update_dir")
+        
+        return "Update successful. Please restart the server manually."
+    except Exception as e:
+        return f"Error updating app: {str(e)}", 500
+        
 if __name__ == '__main__':
     print(f"Server running on http://localhost:{PORT}/")
     app.run(host='0.0.0.0', port=PORT, debug=False)

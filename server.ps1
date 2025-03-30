@@ -477,7 +477,105 @@ try {
 			$response.OutputStream.Write($buffer, 0, $buffer.Length)
 			$response.Close()
 		}
+
+		elseif ($request.Url.LocalPath -eq "/update-app") {
+			$response.ContentType = "text/plain"
+			try {
+				$repoOwner = "serifpersia"
+				$repoName = "scrcpy-desktop"
+				$apiUrl = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+				Write-Host "Fetching latest release from $apiUrl"
+				$release = Invoke-RestMethod -Uri $apiUrl -Method Get -Headers @{ "User-Agent" = "PowerShell" }
 				
+				# Print release details for debugging
+				Write-Host "Release Details:"
+				Write-Host "  Tag Name: $($release.tag_name)"
+				Write-Host "  Published At: $($release.published_at)"
+				Write-Host "  Commit SHA: $($release.target_commitish)"
+				Write-Host "  Assets Count: $($release.assets.Count)"
+				Write-Host "Assets Available:"
+				if ($release.assets.Count -eq 0) {
+					Write-Host "  (No manually uploaded assets)"
+				} else {
+					foreach ($asset in $release.assets) {
+						Write-Host "  - Name: $($asset.name)"
+						Write-Host "    URL: $($asset.browser_download_url)"
+					}
+				}
+
+				# Use the tag to construct the source code ZIP URL
+				$tag = $release.tag_name
+				$zipUrl = "https://github.com/$repoOwner/$repoName/archive/refs/tags/$tag.zip"
+				Write-Host "Downloading source code ZIP from $zipUrl"
+
+				$zipPath = "$scriptDir\temp_update.zip"
+				Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+				
+				$tempDir = "$scriptDir\temp_update_dir"
+				Write-Host "Extracting ZIP to $tempDir"
+				if (Test-Path $tempDir) {
+					Remove-Item -Path $tempDir -Recurse -Force
+				}
+				Expand-Archive -Path $zipPath -DestinationPath $tempDir -Force
+				
+				# Get the extracted subdirectory (e.g., scrcpy-desktop-latest)
+				$extractedDir = Get-ChildItem -Path $tempDir -Directory | Select-Object -First 1
+				if (-not $extractedDir) {
+					throw "No subdirectory found in extracted ZIP."
+				}
+				$extractedPath = $extractedDir.FullName
+				Write-Host "Extracted directory: $extractedPath"
+				Write-Host "Files in extracted directory:"
+				Get-ChildItem -Path $extractedPath -Recurse | ForEach-Object {
+					Write-Host "  - $($_.FullName)"
+				}
+
+				# Copy the required files
+				$filesToCopy = @("index.html", "server.py", "server.ps1")
+				$missingFiles = @()
+				foreach ($file in $filesToCopy) {
+					$sourcePath = Join-Path -Path $extractedPath -ChildPath $file
+					$destPath = Join-Path -Path $scriptDir -ChildPath $file
+					if (Test-Path -Path $sourcePath) {
+						Write-Host "Copying $sourcePath to $destPath"
+						Copy-Item -Path $sourcePath -Destination $destPath -Force
+					} else {
+						Write-Warning "File not found in ZIP: $sourcePath"
+						$missingFiles += $file
+					}
+				}
+
+				if ($missingFiles.Count -gt 0) {
+					throw "Missing files in ZIP: $($missingFiles -join ', ')"
+				}
+
+				Write-Host "Cleaning up temporary files"
+				Remove-Item -Path $zipPath -Force
+				Remove-Item -Path $tempDir -Recurse -Force
+				
+				$buffer = [System.Text.Encoding]::UTF8.GetBytes("Update successful. Restarting server...")
+				Write-Host "Update successful, sending response"
+				$response.ContentLength64 = $buffer.Length
+				$response.OutputStream.Write($buffer, 0, $buffer.Length)
+				$response.Close()
+				
+				Write-Host "Restarting server"
+				$listener.Stop()
+				Start-Sleep -Seconds 1
+				Start-Process -FilePath "powershell.exe" -ArgumentList "-File `"$PSCommandPath`"" -NoNewWindow
+			} catch {
+				$errorMessage = "Error updating app: $_"
+				Write-Host $errorMessage
+				$buffer = [System.Text.Encoding]::UTF8.GetBytes($errorMessage)
+				$response.ContentLength64 = $buffer.Length
+				try {
+					$response.OutputStream.Write($buffer, 0, $buffer.Length)
+					$response.Close()
+				} catch {
+					Write-Host "Failed to send error response: $_"
+				}
+			}
+		}
         # Handle 404 for unknown paths
         else {
             $response.StatusCode = 404
