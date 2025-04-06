@@ -63,27 +63,10 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
    sudo pacman -S scrcpy
     ```
    Handling Older Versions of Scrcpy
-   If your distribution provides an outdated version of Scrcpy, you can download the latest release from official GitHub repository:
+   If your distribution provides an outdated version of Scrcpy, you can build latest version.
    
-   1. Download the latest release tarball:
-      Scrcpy Releases: [scrcpy](https://github.com/Genymobile/scrcpy/releases)
-       ```bash
-       wget <scrcpy_release.tar>
-        ```
-   2. Extract the tarball:
-       ```bash
-      tar -xvzf <filename>.tar.gz
-       ```
-   3. Move the extracted binaries to a directory in your PATH (e.g., /usr/local/bin):
-       ```bash
-      sudo mv scrcpy /usr/local/bin/
-       ```
-   4. Verify the installation:
-       ```bash
-      scrcpy --version
-       ```
    Installing Python Virtual Environment Support
-   To create and use virtual environments in Python, ensure the venv module is installed:
+   To create and use virtual environments in Python, ensure python3 pip and the venv module is installed:
    
    Debian/Ubuntu-based distributions:
     ```bash
