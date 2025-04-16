@@ -116,7 +116,6 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
    - Open Windows Terminal or PowerShell.
    - Navigate to your Scrcpy directory and run:
      ```powershell
-     Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
      .\server.ps1
      ```
    - A local website will be hosted at `http://localhost:8000`.
