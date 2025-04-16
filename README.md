@@ -135,7 +135,7 @@ A simple and intuitive frontend for setting up and using Scrcpy on your desktop 
 - ADB debugging needs to be enabled via developer tools(tapping on build number few times will enable this hidden option in About phone>Software Info section of your Settings app)
 - Forced Desktop Mode is required for options Virtual Display and default, for native taskbar option you would need at least android 12 and android 13 to get app drawer on taskbar
 - Native taskbar option is recommended if you don't want to mess with force desktop mode and 3rd party launchers for desktop experience
-- Dex Mode: Like native task bar option this option starts scrcpy on display id 2 where dex should display. If you see blackscreen make sure you have dummy hdmi device connected or actual hdmi device connected to your usb c to hdmi adapter. HDMI device doesn't need to be on but only powered on for Dex to work.
+- Dex Mode: Like native task bar option this option starts scrcpy on specific display id (2 for dex) where dex should display. If you see blackscreen make sure you have dummy hdmi device connected or actual hdmi device connected to your usb c to hdmi adapter. HDMI device doesn't need to be on but only powered on for Dex to work. If someone knows how to enable dex display without hdmi connected via simple adb command this will help to make this feature better.
 ---
 
 ## License
