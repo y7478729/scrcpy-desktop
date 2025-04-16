@@ -331,152 +331,221 @@ try {
             $response.Close()
         }
 		
-		# Handle /start-scrcpy endpoint
-		elseif ($request.Url.LocalPath -eq "/start-scrcpy") {
-			$response.ContentType = "text/plain"
-			try {
-				$body = New-Object System.IO.StreamReader($request.InputStream)
-				$jsonPayload = $body.ReadToEnd()
-				$body.Close()
-				$config = ConvertFrom-Json $jsonPayload
-				Write-Host "Received Scrcpy configuration: $($config | ConvertTo-Json)"
-				
-				# Helper function to build the Scrcpy command
-				function Build-ScrcpyCommand {
-					param (
-						[string]$deviceSerial,
-						[bool]$useVirtualDisplay,
-						[bool]$useNativeTaskbar,
-						[string]$resolution,
-						[string]$dpi,
-						[string]$bitrate,
-						[string[]]$options,
-						[string]$maxFps,
-						[string]$rotationLock,
-						[string]$displayId = $null
-					)
-					$command = "scrcpy -s $deviceSerial"
-					
-					# Handle power-related options
-					$powerOptions = @("--no-power-on", "--turn-screen-off", "--power-off-on-close")
-					foreach ($opt in $powerOptions) {
-						if ($options -contains $opt) {
-							$command += " $opt"
-						}
-					}
+        # Handle /start-scrcpy endpoint
+        elseif ($request.Url.LocalPath -eq "/start-scrcpy") {
+            $response.ContentType = "text/plain; charset=utf-8" # Ensure UTF-8
+            $successMessage = "Scrcpy session started!"
+            $errorMessage = $null
+            # Declare resetNeeded here so it's accessible in the final catch block
+            $resetNeeded = $false
 
-					if ($useVirtualDisplay) {
-						if ($resolution) { 
-							$command += " --new-display=$resolution" 
-						}
-						if ($dpi) { 
-							$command += "/$dpi" 
-						}
-					}
-					elseif ($useNativeTaskbar) {
-						if ($resolution) {
-							$width, $height = $resolution -split 'x'
-							$swappedResolution = "$height" + "x" + "$width"  # Swap width and height
-							Write-Host "Swapped resolution for native taskbar: $swappedResolution"
-							
-							# Set screen size and density
-							Invoke-AdbCommand "adb -s $deviceSerial shell wm size $swappedResolution" -timeoutSeconds 5 -successPattern ""
-							$calculatedDpi = [math]::Round(0.2667 * [int]$height)
-							Write-Host "Calculated DPI: $calculatedDpi for resolution: $resolution"
-							Invoke-AdbCommand "adb -s $deviceSerial shell wm density $calculatedDpi" -timeoutSeconds 5 -successPattern ""
-							Invoke-AdbCommand "adb -s $deviceSerial shell settings put system user_rotation 1" -timeoutSeconds 5 -successPattern ""
-							$command += " --display-id=0"
-						}
-						$resetNeeded = $true
-					}
-					elseif ($displayId) {
-						$command += " --display-id=$displayId"
-						$resetNeeded = $true
-					}
-					
-					if ($bitrate) { 
-						$command += " $bitrate" 
-					}
-					if ($options) { 
-						$command += " $($options -join ' ')" 
-					}
-					if ($maxFps) { 
-						$command += " $maxFps" 
-					}
-					if ($rotationLock) { 
-						$command += " $rotationLock" 
-					}
-					
-					return @{ Command = $command; ResetNeeded = $resetNeeded }
-				}
+            try {
+                # --- 1. Prerequisites ---
+                if (-not $global:deviceSerial) {
+                    throw "No device selected or connection lost."
+                }
 
-				# Construct the Scrcpy command dynamically
-				if ($config.useVirtualDisplay) {
-					$scrcpyCommandInfo = Build-ScrcpyCommand `
-						-deviceSerial $global:deviceSerial `
-						-useVirtualDisplay $true `
-						-resolution $config.resolution `
-						-dpi $config.dpi `
-						-bitrate $config.bitrate `
-						-options $config.options `
-						-maxFps $config.maxFps `
-						-rotationLock $config.rotationLock
-				}
-				elseif ($config.useNativeTaskbar) {
-					$scrcpyCommandInfo = Build-ScrcpyCommand `
-						-deviceSerial $global:deviceSerial `
-						-useNativeTaskbar $true `
-						-resolution $config.resolution `
-						-bitrate $config.bitrate `
-						-options $config.options `
-						-maxFps $config.maxFps `
-						-rotationLock $config.rotationLock
-				}
-				else {
-					# Get the dynamic display ID with user-specified resolution and DPI
-					Get-DynamicDisplayId -serial $global:deviceSerial -resolution $config.resolution -dpi $config.dpi
-					if (-not $global:dynamicDisplayID) {
-						throw "Could not determine a valid dynamic display ID."
-					}
-					$scrcpyCommandInfo = Build-ScrcpyCommand `
-						-deviceSerial $global:deviceSerial `
-						-displayId $global:dynamicDisplayID `
-						-bitrate $config.bitrate `
-						-options $config.options `
-						-maxFps $config.maxFps `
-						-rotationLock $config.rotationLock
-				}
+                # Verify device connection using Invoke-AdbCommand with direct command
+                Write-Host "Verifying device connection: $global:deviceSerial"
+                # Use adb directly in the command string
+                $checkResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial get-state" -timeoutSeconds 5
+                if (-not $checkResult.Success) {
+                    Write-Warning "Device $global:deviceSerial connection check failed: $($checkResult.Stderr)"
+                    $currentSerial = $global:deviceSerial # Store for message
+                    $global:deviceSerial = $null         # Invalidate serial
+                    throw "Device $currentSerial connection lost: $($checkResult.Stderr). Please re-detect."
+                }
+                 Write-Host "Device $global:deviceSerial connection verified."
 
-				# Save the command to a batch file
-				$batContent = "@echo off`n"
-				$batContent += "$($scrcpyCommandInfo.Command)`n"
-				if ($scrcpyCommandInfo.ResetNeeded) {
-					$batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`n"
-					$batContent += "adb -s $global:deviceSerial shell wm size reset`n"
-					$batContent += "adb -s $global:deviceSerial shell wm density reset`n"
-					$batContent += "adb -s $global:deviceSerial shell settings put system user_rotation 0`n"
-				}
-				Set-Content -Path $scrcpyBatFilePath -Value $batContent
 
-				# Execute the Scrcpy command
-				Write-Host "Executing Scrcpy command: $batContent"
-				$scrcpyProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$scrcpyBatFilePath`"" -NoNewWindow -PassThru -RedirectStandardError "scrcpy_error.log"
-				if (-not $scrcpyProcess.HasExited) {
-					Write-Host "Scrcpy started successfully with PID: $($scrcpyProcess.Id)"
-					$buffer = [System.Text.Encoding]::UTF8.GetBytes("Scrcpy Desktop is running!")
-				} else {
-					$errorOutput = Get-Content -Path "scrcpy_error.log" -Raw
-					Write-Host "Scrcpy failed to start: $errorOutput"
-					$buffer = [System.Text.Encoding]::UTF8.GetBytes("Error: Scrcpy failed to start. $errorOutput")
-				}
-			} catch {
-				Write-Host "Error: $_"
-				$buffer = [System.Text.Encoding]::UTF8.GetBytes("Error: $_")
-			}
-			$response.ContentLength64 = $buffer.Length
-			$response.OutputStream.Write($buffer, 0, $buffer.Length)
-			$response.Close()
-		}
+                # --- 2. Input Parsing ---
+                $body = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+                $jsonPayload = $body.ReadToEnd()
+                $body.Close()
+                $config = ConvertFrom-Json $jsonPayload
+                Write-Host "Received Scrcpy configuration: $($config | ConvertTo-Json -Depth 3)"
+
+                # --- 3. Base Command Arguments ---
+                # We build the final command string later for the batch file
+                $scrcpyArgs = @(
+                    '-s', $global:deviceSerial
+                )
+
+                # --- 4. State Variables ---
+                # resetNeeded declared outside try block
+                $applyRotationLockParam = $true # Whether to add --capture-orientation
+
+                # --- 5. Mode Handling ---
+                if ($config.useSamsungDex) {
+                    Write-Host "Mode: Samsung DeX"
+                    $scrcpyArgs += '--display-id=2'
+                    $resetNeeded = $false            # DeX doesn't change system settings we need to reset
+                    $applyRotationLockParam = $false # Ignore rotation lock for DeX
+                }
+                elseif ($config.useVirtualDisplay) {
+                    Write-Host "Mode: Virtual Display"
+                    if ($config.resolution -and $config.dpi) {
+                        # ASSUMPTION: Get-DynamicDisplayId function exists and uses Invoke-AdbCommand internally
+                        # It should already be calling Invoke-AdbCommand with "adb ..." and "scrcpy ..." commands
+                        Get-DynamicDisplayId -serial $global:deviceSerial -resolution $config.resolution -dpi $config.dpi
+                        # Get-DynamicDisplayId sets a global variable $global:dynamicDisplayID
+                        if ($global:dynamicDisplayID -ne $null) {
+                            $scrcpyArgs += "--display-id=$($global:dynamicDisplayID)"
+                            $resetNeeded = $true # Created an overlay, need reset
+                            Write-Host "Using dynamic display ID: $($global:dynamicDisplayID) for virtual display"
+                        } else {
+                            Write-Warning "Failed to create dynamic display ID for Virtual Mode (check Get-DynamicDisplayId logs). Aborting."
+                            throw "Could not create virtual display. Check ADB/Scrcpy logs."
+                        }
+                    } else {
+                        Write-Warning "Virtual Display selected but Resolution/DPI missing. Using default display (0)."
+                    }
+                    Write-Host "Applying rotation lock (if specified) for Virtual Display mode."
+                }
+                elseif ($config.useNativeTaskbar) {
+                    Write-Host "Mode: Native Taskbar"
+                    $scrcpyArgs += '--display-id=0'
+                    $applyRotationLockParam = $false
+
+                    # Apply Res/DPI via wm commands using direct adb commands
+                    if ($config.resolution) {
+                        try {
+                            if ($config.resolution -match '^(\d+)x(\d+)$') {
+                                $targetResolution = $config.resolution
+                                # Use adb directly in the command string
+                                $wmSizeResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell wm size $targetResolution" -timeoutSeconds 5
+                                if (-not $wmSizeResult.Success) { throw "Failed to set wm size: $($wmSizeResult.Stderr)" }
+                                $resetNeeded = $true
+                            } else {
+                                Write-Warning "Invalid resolution format '$($config.resolution)'. Skipping resolution set."
+                            }
+                        } catch {
+                            Write-Warning "Failed to set resolution $($config.resolution) for Native Taskbar: $($_.Exception.Message). Skipping."
+                            $resetNeeded = $true
+                        }
+                    }
+                    if ($config.dpi) {
+                        try {
+                            if ($config.dpi -match '^\d+$') {
+                                # Use adb directly in the command string
+                                $wmDensityResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell wm density $config.dpi" -timeoutSeconds 5
+                                if (-not $wmDensityResult.Success) { throw "Failed to set wm density: $($wmDensityResult.Stderr)" }
+                                $resetNeeded = $true
+                            } else {
+                                Write-Warning "Invalid DPI format '$($config.dpi)'. Skipping DPI set."
+                            }
+                        } catch {
+                            Write-Warning "Failed to set DPI $($config.dpi) for Native Taskbar: $($_.Exception.Message). Skipping."
+                            $resetNeeded = $true
+                        }
+                    }
+
+                    # Force landscape rotation via settings using direct adb command
+                    try {
+                         # Use adb directly in the command string
+                         $rotationResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings put system user_rotation 1" -timeoutSeconds 5
+                         if (-not $rotationResult.Success) { throw "Failed to set user_rotation: $($rotationResult.Stderr)" }
+                         $resetNeeded = $true
+                    } catch {
+                        Write-Warning "Failed to set rotation for Native Taskbar: $($_.Exception.Message). Skipping."
+                        $resetNeeded = $true
+                    }
+                    Write-Host "Ignoring separate orientation lock for Native Taskbar mode (using forced landscape via settings)."
+                }
+                else { # Default Mode (can also use dynamic display if Res/DPI provided)
+                    Write-Host "Mode: Default / Dynamic Display"
+                    if ($config.resolution -and $config.dpi) {
+                        # ASSUMPTION: Get-DynamicDisplayId function exists and uses Invoke-AdbCommand internally
+                        # It should already be calling Invoke-AdbCommand with "adb ..." and "scrcpy ..." commands
+                        Get-DynamicDisplayId -serial $global:deviceSerial -resolution $config.resolution -dpi $config.dpi
+                        if ($global:dynamicDisplayID -ne $null) {
+                            $scrcpyArgs += "--display-id=$($global:dynamicDisplayID)"
+                            $resetNeeded = $true
+                            Write-Host "Using dynamic display ID: $($global:dynamicDisplayID) for default mode"
+                        } else {
+                            Write-Warning "Failed to create dynamic display ID (check Get-DynamicDisplayId logs). Using default display 0."
+                        }
+                    }
+                }
+
+                # --- 6. Common Options ---
+                if ($config.bitrate) { $scrcpyArgs += $config.bitrate }
+                if ($config.maxFps) { $scrcpyArgs += $config.maxFps }
+
+                # Add rotation lock param if applicable for the mode and provided
+                if ($applyRotationLockParam -and $config.rotationLock) {
+                    $scrcpyArgs += $config.rotationLock
+                } elseif (-not $applyRotationLockParam -and $config.rotationLock) {
+                    Write-Host "Ignoring user-specified orientation lock ($($config.rotationLock)) due to selected mode."
+                }
+
+                # Add other boolean options from the checkbox list
+                if ($config.options -is [array]) {
+                    $validOptions = $config.options | Where-Object { $_ -ne $null -and $_ -ne '' }
+                    if ($validOptions) {
+                         $scrcpyArgs += $validOptions
+                    }
+                }
+
+                # --- 7. Execution via Batch File (Ensures Reset After Scrcpy Exits) ---
+                # Build the final command string starting directly with scrcpy
+                $finalScrcpyCommand = "scrcpy $($scrcpyArgs -join ' ')"
+                Write-Host "Final Scrcpy Command to be executed: $finalScrcpyCommand"
+
+                # Build batch file content, calling adb and scrcpy directly
+                $batContent = "@echo off`r`n"
+                $batContent += "$finalScrcpyCommand`r`n" # No $SCRCPY_PATH variable
+
+                # Add reset commands to the batch file *if needed*, calling adb directly
+                if ($resetNeeded) {
+                    Write-Host "Display reset commands will be added to batch file for execution after Scrcpy exits."
+                    # No $ADB_PATH variable
+                    $batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`r`n"
+                    $batContent += "adb -s $global:deviceSerial shell wm size reset`r`n"
+                    $batContent += "adb -s $global:deviceSerial shell wm density reset`r`n"
+                    $batContent += "adb -s $global:deviceSerial shell settings put system user_rotation 0`r`n"
+                } else {
+                    Write-Host "No display reset needed for this mode."
+                }
+
+                # Ensure script directory exists and save the batch file
+                if (-not (Test-Path $scriptDir)) { New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null }
+                Set-Content -Path $scrcpyBatFilePath -Value $batContent -Encoding OEM -Force
+
+                # Execute the batch file asynchronously
+                Write-Host "Executing Scrcpy via batch file: $scrcpyBatFilePath"
+                Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$scrcpyBatFilePath`"" -WindowStyle Minimized
+
+            } catch {
+                # Catch errors from prerequisite checks, JSON parsing, ADB/Scrcpy commands, etc.
+                $errorMessage = "Error starting Scrcpy: $($_.Exception.Message)"
+                Write-Error $errorMessage
+                $response.StatusCode = 500
+
+                # Attempt cleanup if needed
+                if ($resetNeeded -and $global:deviceSerial) {
+                    Write-Warning "Attempting display reset due to error during startup..."
+                    try {
+                        # ASSUMPTION: Reset-Display uses Invoke-AdbCommand with direct "adb ..." commands
+                        Reset-Display -serial $global:deviceSerial
+                    } catch {
+                        Write-Warning "Cleanup reset failed: $($_.Exception.Message)"
+                    }
+                }
+            } # End of main Try block for /start-scrcpy
+
+            # --- 8. Send Response ---
+            $messageToSend = if ($errorMessage) { $errorMessage } else { $successMessage }
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($messageToSend)
+            $response.ContentLength64 = $buffer.Length
+            try {
+                $response.OutputStream.Write($buffer, 0, $buffer.Length)
+            } catch {
+                 Write-Error "Failed to write response to client: $_"
+            } finally {
+                 $response.Close()
+            }
+        }	
 
 		elseif ($request.Url.LocalPath -eq "/update-app") {
 			$response.ContentType = "text/plain"
