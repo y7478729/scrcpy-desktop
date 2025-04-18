@@ -390,14 +390,13 @@ def start_scrcpy():
         if resolution:
             try:
                 print(f"  Attempting to set resolution: {resolution}")
-                width_str, height_str = resolution.split('x')
-                height = int(height_str)
-                target_resolution = resolution
-                run_adb_command(['shell', 'wm', 'size', target_resolution], serial=DEVICE_SERIAL, check=True)
+                width, height = map(int, resolution.split('x'))
+                swapped_resolution = f"{height}x{width}"
+                run_adb_command(['shell', 'wm', 'size', swapped_resolution], serial=DEVICE_SERIAL, check=True)
                 print("  Resolution set OK.")
                 reset_needed = True
             except ValueError:
-                print(f"  Invalid resolution format: '{resolution}'. Skipping.")
+                print(f"  Invalid resolution format: '{swapped_resolution}'. Skipping.")
                 height = None
             except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
                 print(f"  Failed to set resolution: {e}. Skipping.")

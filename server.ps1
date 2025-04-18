@@ -414,11 +414,12 @@ try {
 
                     if ($config.resolution) {
                         try {
-                            Write-Host "  Attempting to set resolution: $($config.resolution)"
-                            if ($config.resolution -match '^(\d+)x(\d+)$') {
+                            $width, $height = $config.resolution -split 'x'
+                            $swappedResolution = "$height" + "x" + "$width"
+							Write-Host "Swapped resolution for native taskbar: $swappedResolution"
+							if ($config.resolution -match '^(\d+)x(\d+)$') {
                                 $heightInt = [int]$matches[2]
-                                $targetResolution = $config.resolution
-                                $wmSizeResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell wm size $targetResolution" -timeoutSeconds 5
+                                $wmSizeResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell wm size $swappedResolution" -timeoutSeconds 5
                                 if (-not $wmSizeResult.Success) { throw ("{0}" -f $wmSizeResult.Stderr) }
                                 Write-Host "  Resolution set OK."
                                 $resetNeeded = $true
