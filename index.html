@@ -29,7 +29,7 @@
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
             width: 100%;
             max-width: 860px;
-            text-align: center;
+            text-align: left;
             transition: transform 0.2s ease;
         }
         .container:hover {
@@ -41,6 +41,7 @@
             color: #FFFFFF;
             margin-bottom: 25px;
             position: relative;
+            text-align: center;
         }
         .title::after {
             content: "";
@@ -51,43 +52,58 @@
             margin: 10px auto;
             border-radius: 2px;
         }
-        select, input, button {
-            width: 100%;
-            margin-top: 15px;
-            padding: 14px;
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            transition: all 0.3s ease;
+        select, input[type="text"], input[type="number"], button {
+             width: 100%;
+             margin-top: 15px;
+             padding: 14px;
+             border: none;
+             border-radius: 8px;
+             font-size: 1.1rem;
+             transition: all 0.3s ease;
         }
-        select, input {
+        select, input[type="text"], input[type="number"] {
             background: #3A4047;
             color: #DDE1E6;
             box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
         }
-        select:focus, input:focus {
+        select:focus, input[type="text"]:focus, input[type="number"]:focus {
             outline: none;
             box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.5);
             background: #404850;
         }
         button {
-            background: linear-gradient(45deg, #00A3CC, #00D4FF);
-            color: #FFFFFF;
             font-weight: 600;
             text-transform: uppercase;
             cursor: pointer;
             padding: 14px 20px;
-            box-shadow: 0 2px 8px rgba(0, 163, 204, 0.3);
+            text-align: center;
         }
-        button:hover {
+        #startButton {
+            background: linear-gradient(45deg, #00A3CC, #00D4FF);
+            color: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(0, 163, 204, 0.3);
+             margin-bottom: 25px;
+        }
+        #startButton:hover {
             background: linear-gradient(45deg, #008BB0, #00B8E6);
             box-shadow: 0 4px 12px rgba(0, 163, 204, 0.4);
         }
+        #updateButton {
+            background: linear-gradient(45deg, #FF9800, #FB8C00);
+            color: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(255, 152, 0, 0.3);
+            margin-top: 25px;
+        }
+        #updateButton:hover {
+            background: linear-gradient(45deg, #F57C00, #E65100);
+            box-shadow: 0 4px 12px rgba(255, 152, 0, 0.4);
+        }
+
         .checkbox-group {
             display: flex;
             flex-wrap: wrap;
             gap: 12px;
-            justify-content: center;
+            justify-content: left;
             margin-top: 15px;
             max-width: 100%;
         }
@@ -99,11 +115,13 @@
             font-size: 1rem;
             transition: all 0.3s ease;
             min-width: 120px;
+            text-align: center;
+            display: inline-block;
         }
-        .checkbox-group input {
+        .checkbox-group input[type="checkbox"] {
             display: none;
         }
-        .checkbox-group input:checked + label {
+         .checkbox-group input[type="checkbox"]:checked + label {
             background: #00A3CC;
             color: #FFFFFF;
         }
@@ -113,9 +131,10 @@
             border-radius: 8px;
             text-align: left;
             white-space: pre-wrap;
-            margin-top: 20px;
+            margin-top: 15px;
             min-height: 60px;
             font-size: 0.95rem;
+             overflow-x: auto;
         }
         #statusMessage {
             margin-top: 20px;
@@ -125,6 +144,7 @@
             opacity: 0;
             transition: opacity 0.5s ease-in-out;
             font-weight: 500;
+            min-height: 20px;
         }
         .status-success {
             background: #43A047;
@@ -138,41 +158,40 @@
             display: none;
             margin-top: 15px;
         }
-
 		input[type="number"] {
-			-moz-appearance: textfield; /* Firefox */
+			-moz-appearance: textfield;
 		}
-
-		/* Webkit browsers (Chrome, Safari, Edge) */
 		input[type="number"]::-webkit-inner-spin-button,
 		input[type="number"]::-webkit-outer-spin-button {
 			-webkit-appearance: none;
 			margin: 0;
 		}
-		
         .spinner {
             display: inline-block;
-            width: 24px;
-            height: 24px;
-            border: 4px solid rgba(255, 255, 255, 0.3);
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
             border-radius: 50%;
             border-top-color: #FFFFFF;
             animation: spin 1s ease-in-out infinite;
-            margin-left: 12px;
+            margin-left: 10px;
             vertical-align: middle;
         }
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
         .button-disabled {
-            opacity: 0.5;
+            opacity: 0.6;
             cursor: not-allowed;
-            box-shadow: none;
+            box-shadow: none !important;
+             background: #404850 !important;
+             color: #888 !important; /* Dim text color when disabled */
         }
         footer {
             font-size: 1.25rem;
             color: #A9B1B8;
             padding: 15px 0;
+             text-align: center;
         }
         footer a {
             color: #00D4FF;
@@ -195,13 +214,11 @@
             display: block;
             margin-top: 5px;
         }
-
-        /* Style for disabled form elements */
         select:disabled, input:disabled {
-            background-color: #404850; /* Slightly darker background */
-            color: #888; /* Greyed out text */
+            background-color: #404850;
+            color: #888;
             cursor: not-allowed;
-            opacity: 0.6; /* Make it visually clear it's disabled */
+            opacity: 0.6;
         }
         .checkbox-group label.disabled {
              opacity: 0.5;
@@ -209,6 +226,47 @@
         }
         label.disabled {
              opacity: 0.5;
+        }
+        .collapsible {
+          background-color: #3A4047;
+          color: #DDE1E6;
+          cursor: pointer;
+          padding: 14px;
+          width: 100%;
+          border: none;
+          text-align: left;
+          outline: none;
+          font-size: 1.1rem;
+          transition: 0.3s ease;
+          border-radius: 8px;
+          margin-top: 25px;
+          box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .collapsible:hover {
+          background-color: #404850;
+        }
+        .collapsible:after {
+          content: '\002B';
+          color: #DDE1E6;
+          font-weight: bold;
+          float: right;
+          margin-left: 5px;
+        }
+        .active:after {
+          content: "\2212";
+        }
+        .content {
+          padding: 0 18px;
+          max-height: 0;
+          overflow: hidden;
+          transition: max-height 0.3s ease-out;
+          background-color: #2F343A;
+          border-radius: 0 0 8px 8px;
+          text-align: left;
+          margin-bottom: 25px;
+        }
+        .content pre {
+            margin: 10px 0;
         }
     </style>
 </head>
@@ -225,7 +283,6 @@
             <input type="text" id="ipAddress" placeholder="e.g., 192.168.1.100">
             <small>Auto IP detection will occur if USB is connected.</small>
         </div>
-
         <label for="resolution" id="resolutionLabel">Resolution:</label>
         <select id="resolution">
             <option value="480x320">480x320</option>
@@ -236,7 +293,7 @@
             <option value="1440x900">1440x900</option>
             <option value="1600x900">1600x900</option>
             <option value="1680x1050">1680x1050</option>
-            <option value="1920x1080" selected>1920x1080</option> <!-- Default selected -->
+            <option value="1920x1080" selected>1920x1080</option>
             <option value="1920x1200">1920x1200</option>
             <option value="2560x1440">2560x1440</option>
             <option value="2560x1600">2560x1600</option>
@@ -244,7 +301,6 @@
             <option value="3840x2160">3840x2160</option>
         </select>
         <input type="text" id="customResolution" placeholder="Custom Resolution (e.g., 1920x1080)">
-
         <label for="dpi" id="dpiLabel">DPI:</label>
         <select id="dpi">
             <option value="160" selected>160dpi</option>
@@ -254,7 +310,6 @@
             <option value="640">640dpi</option>
         </select>
         <input type="number" id="customDpi" placeholder="Custom DPI (e.g., 120)">
-
         <label for="bitrate">Bitrate:</label>
         <select id="bitrate">
             <option value="-b 2M">2 Mbps</option>
@@ -262,7 +317,6 @@
             <option value="-b 8M" selected>8 Mbps</option>
         </select>
         <input type="number" id="customBitrate" placeholder="Custom Bitrate (Mbps)">
-
         <label for="maxFps">Max FPS:</label>
         <select id="maxFps">
             <option value="--max-fps=30">30 FPS</option>
@@ -270,7 +324,6 @@
             <option value="--max-fps=120">120 FPS</option>
             <option value="--max-fps=240">240 FPS</option>
         </select>
-
         <label for="rotationLock" id="rotationLockLabel">Orientation Lock:</label>
         <select id="rotationLock">
             <option value="--capture-orientation=0">Default (0°)</option>
@@ -278,7 +331,6 @@
             <option value="--capture-orientation=180">Flip Upside Down (180°)</option>
             <option value="--capture-orientation=270">Rotate Left (270°)</option>
         </select>
-
         <label>Additional Options:</label>
         <div class="checkbox-group">
             <input type="checkbox" id="noPowerOn" value="--no-power-on">
@@ -297,7 +349,6 @@
             <label for="useVirtualDisplay">Virtual Display</label>
             <input type="checkbox" id="useNativeTaskbar">
             <label for="useNativeTaskbar">Native Taskbar (Android 12+)</label>
-            <!-- ADDED Samsung DeX Checkbox -->
             <input type="checkbox" id="useSamsungDex">
             <label for="useSamsungDex">Samsung DeX</label>
         </div>
@@ -305,8 +356,12 @@
             Start
             <span id="spinner" class="spinner" style="display: none;"></span>
         </button>
+		<button class="collapsible">Show Scrcpy Command</button>
+        <div class="content">
+            <pre id="scrcpyCommandDisplay">Press Start to see the command...</pre>
+        </div>
         <button id="updateButton" onclick="updateApp()">
-            Update
+            Update App
             <span id="updateSpinner" class="spinner" style="display: none;"></span>
         </button>
         <div id="statusMessage"></div>
@@ -315,25 +370,21 @@
         © 2025 <a href="https://github.com/serifpersia" target="_blank">serifpersia</a>. All rights reserved.
     </footer>
     <script>
-        // --- Existing Functions (toggleIpField, setStatus) ---
         function toggleIpField() {
             const mode = document.getElementById("mode").value;
             const ipField = document.getElementById("ipField");
             ipField.style.display = mode === "wifi" ? "block" : "none";
         }
-
         function setStatus(message, isSuccess) {
             const statusMessageDiv = document.getElementById("statusMessage");
             statusMessageDiv.innerText = message;
-            statusMessageDiv.className = ""; // Clear existing classes
-            statusMessageDiv.classList.add("statusMessage"); // Base class if needed
+            statusMessageDiv.className = "";
+            statusMessageDiv.classList.add("statusMessage");
             if (message) {
                 statusMessageDiv.classList.add(isSuccess ? "status-success" : "status-error");
                 statusMessageDiv.style.opacity = "1";
-                // Clear message after a delay
                 setTimeout(() => {
                     statusMessageDiv.style.opacity = "0";
-                    // Optional: Clear text after fade out
                     setTimeout(() => statusMessageDiv.innerText = "", 500);
                 }, 3000);
             } else {
@@ -341,47 +392,30 @@
                 statusMessageDiv.innerText = "";
             }
         }
-
-        // --- References to Elements ---
         const virtualDisplayCheckbox = document.getElementById("useVirtualDisplay");
         const nativeTaskbarCheckbox = document.getElementById("useNativeTaskbar");
-        const samsungDexCheckbox = document.getElementById("useSamsungDex"); // New DeX checkbox
-
+        const samsungDexCheckbox = document.getElementById("useSamsungDex");
         const resolutionSelect = document.getElementById("resolution");
         const customResolutionInput = document.getElementById("customResolution");
         const dpiSelect = document.getElementById("dpi");
         const customDpiInput = document.getElementById("customDpi");
         const rotationLockSelect = document.getElementById("rotationLock");
-
         const resolutionLabel = document.getElementById("resolutionLabel");
         const dpiLabel = document.getElementById("dpiLabel");
         const rotationLockLabel = document.getElementById("rotationLockLabel");
-
         const virtualDisplayLabel = document.querySelector("label[for='useVirtualDisplay']");
         const nativeTaskbarLabel = document.querySelector("label[for='useNativeTaskbar']");
-        const samsungDexLabel = document.querySelector("label[for='useSamsungDex']"); // New DeX label
-
-
-        // --- Event Listeners for Mutual Exclusivity and Disabling ---
-
+        const samsungDexLabel = document.querySelector("label[for='useSamsungDex']");
         function updateDisplayOptionsState() {
             const virtualChecked = virtualDisplayCheckbox.checked;
             const nativeChecked = nativeTaskbarCheckbox.checked;
             const dexChecked = samsungDexCheckbox.checked;
-
-            // --- Mutual Exclusivity for Display Modes ---
             virtualDisplayCheckbox.disabled = nativeChecked || dexChecked;
             nativeTaskbarCheckbox.disabled = virtualChecked || dexChecked;
             samsungDexCheckbox.disabled = virtualChecked || nativeChecked;
-
-            // Update label styles for disabled display mode checkboxes
             virtualDisplayLabel.classList.toggle('disabled', nativeChecked || dexChecked);
             nativeTaskbarLabel.classList.toggle('disabled', virtualChecked || dexChecked);
             samsungDexLabel.classList.toggle('disabled', virtualChecked || nativeChecked);
-
-            // --- Disabling Specific Controls based on Mode ---
-
-            // Disable Res/DPI only for DeX mode
             const disableResDpi = dexChecked;
             resolutionSelect.disabled = disableResDpi;
             customResolutionInput.disabled = disableResDpi;
@@ -389,13 +423,10 @@
             customDpiInput.disabled = disableResDpi;
             resolutionLabel.classList.toggle('disabled', disableResDpi);
             dpiLabel.classList.toggle('disabled', disableResDpi);
-
-            // Disable Orientation Lock for Native Taskbar AND DeX modes
             const disableOrientation = nativeChecked || dexChecked;
             rotationLockSelect.disabled = disableOrientation;
             rotationLockLabel.classList.toggle('disabled', disableOrientation);
         }
-
         virtualDisplayCheckbox.addEventListener("change", function() {
             if (this.checked) {
                 nativeTaskbarCheckbox.checked = false;
@@ -403,7 +434,6 @@
             }
             updateDisplayOptionsState();
         });
-
         nativeTaskbarCheckbox.addEventListener("change", function() {
             if (this.checked) {
                 virtualDisplayCheckbox.checked = false;
@@ -411,7 +441,6 @@
             }
             updateDisplayOptionsState();
         });
-
         samsungDexCheckbox.addEventListener("change", function() {
             if (this.checked) {
                 virtualDisplayCheckbox.checked = false;
@@ -419,103 +448,117 @@
             }
             updateDisplayOptionsState();
         });
-
-        // --- No Control Listener (Existing - Keep As Is) ---
         document.getElementById("noControl").addEventListener("change", function() {
             const turnScreenOffCheckbox = document.getElementById("turnScreenOff");
-            const powerOffOnCloseCheckbox = document.getElementById("powerOffOnClose"); // Corrected ID
+            const powerOffOnCloseCheckbox = document.getElementById("powerOffOnClose");
             const turnScreenOffLabel = document.querySelector("label[for='turnScreenOff']");
-            const powerOffOnCloseLabel = document.querySelector("label[for='powerOffOnClose']"); // Corrected selector
-
+            const powerOffOnCloseLabel = document.querySelector("label[for='powerOffOnClose']");
             if (this.checked) {
                 turnScreenOffCheckbox.disabled = true;
-                powerOffOnCloseCheckbox.disabled = true; // Disable Power Off on Close too? Makes sense.
+                powerOffOnCloseCheckbox.disabled = true;
                 turnScreenOffCheckbox.checked = false;
-                powerOffOnCloseCheckbox.checked = false; // Uncheck it too
-
+                powerOffOnCloseCheckbox.checked = false;
                 turnScreenOffLabel.classList.add('disabled');
-                powerOffOnCloseLabel.classList.add('disabled'); // Add disabled class to label
+                powerOffOnCloseLabel.classList.add('disabled');
             } else {
                 turnScreenOffCheckbox.disabled = false;
-                powerOffOnCloseCheckbox.disabled = false; // Re-enable
-
+                powerOffOnCloseCheckbox.disabled = false;
                 turnScreenOffLabel.classList.remove('disabled');
-                powerOffOnCloseLabel.classList.remove('disabled'); // Remove disabled class
+                powerOffOnCloseLabel.classList.remove('disabled');
             }
         });
-
-        // --- Initial State Setup on Load ---
         window.addEventListener("DOMContentLoaded", () => {
-            // Ensure initial states are correct based on default checked status
              updateDisplayOptionsState();
-
-            // Trigger change for noControl if initially checked
             const noControl = document.getElementById("noControl");
             if (noControl.checked) {
                 noControl.dispatchEvent(new Event("change"));
             }
         });
-
-        // --- startScrcpy Function (Modified) ---
+        var coll = document.getElementsByClassName("collapsible");
+        var i;
+        for (i = 0; i < coll.length; i++) {
+          coll[i].addEventListener("click", function() {
+            this.classList.toggle("active");
+            var content = this.nextElementSibling;
+            if (content.style.maxHeight){
+              content.style.maxHeight = null;
+            } else {
+              content.style.maxHeight = content.scrollHeight + "px";
+            }
+          });
+        }
+        window.addEventListener('resize', function() {
+             for (i = 0; i < coll.length; i++) {
+                 var content = coll[i].nextElementSibling;
+                 if (coll[i].classList.contains('active')) {
+                     content.style.maxHeight = content.scrollHeight + "px";
+                 }
+             }
+        });
         async function startScrcpy() {
             const startButton = document.getElementById("startButton");
             const spinner = document.getElementById("spinner");
             const ipInput = document.getElementById("ipAddress");
+            const scrcpyCommandDisplay = document.getElementById("scrcpyCommandDisplay");
+            const statusMessageDiv = document.getElementById("statusMessage");
             startButton.disabled = true;
             startButton.classList.add("button-disabled");
             spinner.style.display = "inline-block";
-            setStatus("", true); // Clear previous status
-
+            setStatus("", true);
+            scrcpyCommandDisplay.innerText = "Loading command...";
             try {
-                // --- Device Detection and Connection (Keep As Is) ---
                 const mode = document.getElementById("mode").value;
                 let ipAddress = mode === "wifi" ? ipInput.value.trim() : null;
-                if (mode === "wifi" && !ipAddress) {
-                    setStatus("Attempting to auto-detect IP via USB...", true);
-                }
+                setStatus(`Detecting device via ${mode.toUpperCase()}...`, true);
                 const detectResponse = await fetch('/detect-device', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mode, ip: ipAddress })
                 });
                 const detectData = await detectResponse.json();
+                if (!detectResponse.ok) {
+                     throw new Error(detectData.message || `HTTP error! status: ${detectResponse.status}`);
+                }
                 if (!detectData.success) {
                     throw new Error(detectData.message);
                 }
                 if (mode === "wifi" && detectData.ip) {
                     ipAddress = detectData.ip;
                     ipInput.value = ipAddress;
-                    setStatus(`Auto-detected IP: ${ipAddress}`, true);
-                } else if (mode === "wifi" && !ipAddress && !detectData.ip) { // Check if IP still not found
+                    setStatus(`Auto-detected IP: ${ipAddress}. Connecting...`, true);
+                } else if (mode === "wifi" && !ipAddress && !detectData.ip) {
                     throw new Error("Please enter a valid IP address or connect via USB for auto-detection.");
+                } else {
+                     setStatus(`Device ${detectData.model || 'Unknown'} detected. Connecting...`, true);
                 }
-                setStatus(`${mode.toUpperCase()}: Phone ${detectData.model || 'Unknown'} detected. Connecting...`, true);
                 const connectResponse = await fetch('/connect-device', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mode, ip: ipAddress })
                 });
                 const connectData = await connectResponse.json();
+                if (!connectResponse.ok) {
+                     throw new Error(connectData.message || `HTTP error! status: ${connectResponse.status}`);
+                }
                 if (!connectData.success) {
                     throw new Error(connectData.message);
                 }
                 setStatus(`Connection successful. Preparing Scrcpy...`, true);
-
-                // --- Gather Scrcpy Config ---
                 const resolution = document.getElementById("customResolution").value.trim() || document.getElementById("resolution").value;
                 const dpi = document.getElementById("customDpi").value.trim() || document.getElementById("dpi").value;
                 const bitrateValue = document.getElementById("customBitrate").value.trim();
                 const bitrate = bitrateValue ? `-b ${bitrateValue}M` : document.getElementById("bitrate").value;
                 const maxFps = document.getElementById("maxFps").value;
                 const rotationLock = document.getElementById("rotationLock").value;
-                // Exclude display mode checkboxes from generic options list
-                const options = Array.from(document.querySelectorAll(".checkbox-group input:checked:not(#useVirtualDisplay):not(#useNativeTaskbar):not(#useSamsungDex)")).map(input => input.value);
+                const options = Array.from(document.querySelectorAll(".checkbox-group input:checked")).filter(input =>
+                     input.id !== 'useVirtualDisplay' && input.id !== 'useNativeTaskbar' && input.id !== 'useSamsungDex'
+                 ).map(input => input.value);
                 const useVirtualDisplay = document.getElementById("useVirtualDisplay").checked;
                 const useNativeTaskbar = document.getElementById("useNativeTaskbar").checked;
-                const useSamsungDex = document.getElementById("useSamsungDex").checked; // Get DeX state
-
+                const useSamsungDex = document.getElementById("useSamsungDex").checked;
                 const scrcpyConfig = {
-                    mode, // Keep mode for potential backend use if needed
+                    mode,
+                    ip: ipAddress,
                     resolution,
                     dpi,
                     bitrate,
@@ -524,63 +567,69 @@
                     options,
                     useVirtualDisplay,
                     useNativeTaskbar,
-                    useSamsungDex // Pass DeX state
+                    useSamsungDex
                 };
-                console.log("Sending Scrcpy Config:", scrcpyConfig); // Log config for debugging
-
-                // --- Start Scrcpy Call ---
-                setStatus(`Starting Scrcpy...`, true); // Update status before call
+                setStatus(`Starting Scrcpy...`, true);
                 const scrcpyResponse = await fetch('/start-scrcpy', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(scrcpyConfig)
                 });
-
-                const scrcpyData = await scrcpyResponse.text();
-                if (!scrcpyResponse.ok) { // Check HTTP status code
-                     throw new Error(scrcpyData); // Throw error if backend reported one
+                 const scrcpyResultText = await scrcpyResponse.text();
+                 const parts = scrcpyResultText.split("---COMMAND---");
+                 const message = parts[0];
+                 const commandText = parts[1] || "Command not available.";
+                if (!scrcpyResponse.ok) {
+                     throw new Error(message || `HTTP error! status: ${scrcpyResponse.status}`);
                 }
-                 setStatus(scrcpyData, true); // Success message from backend
-
+                setStatus(message, true);
+                 scrcpyCommandDisplay.innerText = commandText;
+                 const collapsibleButton = document.querySelector('.collapsible');
+                 const contentDiv = document.querySelector('.content');
+                 if (!collapsibleButton.classList.contains('active')) {
+                      collapsibleButton.classList.add('active');
+                     contentDiv.style.maxHeight = contentDiv.scrollHeight + "px";
+                 }
             } catch (error) {
-                console.error("Error during Scrcpy start:", error); // Log the full error
                 setStatus(`Error: ${error.message}`, false);
+                scrcpyCommandDisplay.innerText = `Failed to generate/execute command due to error: ${error.message}`;
+                 const collapsibleButton = document.querySelector('.collapsible');
+                 const contentDiv = document.querySelector('.content');
+                 if (!collapsibleButton.classList.contains('active')) {
+                      collapsibleButton.classList.add('active');
+                     contentDiv.style.maxHeight = contentDiv.scrollHeight + "px";
+                 }
             } finally {
                 spinner.style.display = "none";
                 startButton.disabled = false;
                 startButton.classList.remove("button-disabled");
             }
         }
-
-        // --- updateApp Function (Keep As Is) ---
         async function updateApp() {
             const updateButton = document.getElementById("updateButton");
             const updateSpinner = document.getElementById("updateSpinner");
             updateButton.disabled = true;
             updateButton.classList.add("button-disabled");
             updateSpinner.style.display = "inline-block";
-            setStatus("", true); // Clear status
-
+            setStatus("", true);
             try {
+                setStatus("Checking for updates...", true);
                 const response = await fetch('/update-app', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}) // Empty body is fine
+                    body: JSON.stringify({})
                 });
-                const result = await response.text();
-
+                const resultText = await response.text();
                 if (!response.ok) {
-                     throw new Error(result); // Throw error if backend reported one
+                     throw new Error(resultText || `HTTP error! status: ${response.status}`);
                 }
-                setStatus(result, true); // Display success/info message from backend
-
-                if (result.toLowerCase().includes("successful")) { // Check for success indication
-                    setStatus("Update successful! Reloading page...", true);
-                    setTimeout(() => window.location.reload(), 2500); // Reload page after update
+                setStatus(resultText, true);
+                if (resultText.toLowerCase().includes("successful") || resultText.toLowerCase().includes("updated")) {
+                    setStatus("Update successful! Application may restart. Reloading page...", true);
+                    setTimeout(() => window.location.reload(), 3000);
                 }
             } catch (error) {
-                 console.error("Error during update:", error);
-                setStatus(`Error: ${error.message}`, false);
+                setStatus(`Error updating: ${error.message}`, false);
             } finally {
                 updateSpinner.style.display = "none";
                 updateButton.disabled = false;
