@@ -24,6 +24,8 @@
             --error-color: #F44336;
             --shadow-color: rgba(0, 0, 0, 0.5);
             --surface-elevation: #242424;
+            --modal-bg: var(--card-bg);
+            --modal-text: var(--text-color);
         }
 
         .light-mode {
@@ -45,6 +47,8 @@
             --error-color: #D93025;
             --shadow-color: rgba(0, 0, 0, 0.1);
             --surface-elevation: #FFFFFF;
+            --modal-bg: var(--card-bg);
+            --modal-text: var(--text-color);
         }
 
         * {
@@ -201,7 +205,7 @@
         }
 
         .card-grid {
-            display: grid;
+            display: contents;
             gap: 16px;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             width: 100%;
@@ -243,12 +247,14 @@
             color: var(--dim-text-color);
             font-size: 0.75rem;
             display: block;
-            margin-top: 4px;
+            margin-top: 20px;
+            margin-bottom: 15px;
             transition: color 0.3s ease;
         }
 
         select, input[type="text"], input[type="number"] {
             width: 100%;
+			margin-bottom: 15px;
             padding: 10px;
             border: 1px solid var(--input-border);
             border-radius: 8px;
@@ -283,7 +289,6 @@
         }
 
         #ipField {
-            display: none;
         }
 
         input[type="number"] {
@@ -354,6 +359,7 @@
             box-shadow: none;
             font-size: 0.875rem;
             text-transform: none;
+            width: 100%;
         }
 
         .command-card .collapsible:hover {
@@ -399,6 +405,8 @@
             margin: 0;
             font-size: 0.75rem;
             color: var(--text-color);
+            white-space: pre-wrap;
+            word-break: break-all;
         }
 
         .full-width-actions {
@@ -421,6 +429,9 @@
             letter-spacing: 0.02em;
             transition: all 0.3s ease;
             border: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
 
         #startButton {
@@ -430,6 +441,19 @@
         }
 
         #startButton:hover:not(.button-disabled) {
+            background: var(--primary-accent-dark);
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.4);
+            transform: translateY(-1px);
+        }
+
+        #pairButton {
+            background: var(--primary-accent);
+            color: #FFFFFF;
+            box-shadow: 0 2px 8px rgba(26, 115, 232, 0.3);
+             margin-top: 15px;
+        }
+
+        #pairButton:hover:not(.button-disabled) {
             background: var(--primary-accent-dark);
             box-shadow: 0 4px 12px rgba(26, 115, 232, 0.4);
             transform: translateY(-1px);
@@ -460,6 +484,11 @@
             vertical-align: middle;
         }
 
+        .modal-content .spinner {
+             border-color: rgba(0, 0, 0, 0.3);
+             border-top-color: #000000;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -473,6 +502,11 @@
             transform: none;
             border-color: var(--input-border);
         }
+         /* Ensure spinners in disabled buttons are still visible */
+        .button-disabled .spinner {
+             border-top-color: var(--dim-text-color);
+        }
+
 
         #statusMessage {
             padding: 10px 16px;
@@ -483,6 +517,7 @@
             font-weight: 400;
             min-height: 20px;
             border: 1px solid transparent;
+            margin-top: 12px;
         }
 
         .status-success {
@@ -600,54 +635,82 @@
             }
         }
 
-        .modal-content {
-            background: white;
+        /* --- QR Modal Styles --- */
+        #qrModalOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+             /* Keep display: none; initially, JS will change it to flex */
+        }
+
+        #qrModal {
+            background: var(--modal-bg);
+            color: var(--modal-text);
             padding: 24px;
             border-radius: 12px;
             box-shadow: 0 4px 16px var(--shadow-color);
             border: 1px solid var(--card-border);
             max-width: 400px;
-            width: 100%;
-            text-align: left;
+            width: 90%;
+            text-align: center;
             position: relative;
-            transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+            transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
             box-sizing: border-box;
             max-height: 90vh;
             overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
-        .modal-content h3 {
+        #qrModal h3 {
             color: var(--primary-accent);
             font-size: 1.25rem;
             margin-bottom: 16px;
             transition: color 0.3s ease;
         }
 
-        .modal-content p {
-             color: black;
+        #qrModal p {
+             color: var(--modal-text);
              font-size: 1rem;
              margin-bottom: 16px;
              line-height: 1.5;
              transition: color 0.3s ease;
+             text-align: left;
+             width: 100%;
         }
 
-        .modal-content small {
+        #qrModal small {
              color: var(--dim-text-color);
              font-size: 0.875rem;
              display: block;
              margin-top: 8px;
              transition: color 0.3s ease;
+             text-align: center;
+             width: 100%;
         }
 
         #qrcode {
-            width: 160px;
-            height: 160px;
-            margin: 10px auto;
+            width: 200;
+            height: 200;
+            margin: 20px auto;
             display: flex;
             justify-content: center;
             align-items: center;
+            background-color: #FFFFFF;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         }
 
+        /* Ensure QR code generated inside #qrcode is centered */
         #qrcode canvas, #qrcode img {
              margin: 0 auto !important;
              display: block;
@@ -655,7 +718,7 @@
 
         .close-button {
             position: absolute;
-            top: 10px;
+            top: 15px;
             right: 15px;
             font-size: 24px;
             font-weight: bold;
@@ -663,11 +726,35 @@
             cursor: pointer;
             transition: color 0.3s ease;
             line-height: 1;
+            padding: 5px;
         }
 
         .close-button:hover {
             color: var(--text-color);
         }
+
+        #qrModalStatus {
+             text-align: center;
+             min-height: 20px;
+             margin-top: 10px;
+             font-size: 0.9rem;
+             color: var(--modal-text);
+        }
+
+        #qrConnectButton {
+             margin-top: 20px;
+        }
+
+         /* Hide button text when spinner is showing in modal button */
+         #qrConnectButton .button-text {
+             display: inline-block;
+         }
+
+         #qrConnectButton .spinner + .button-text {
+             display: none;
+         }
+
+
     </style>
 </head>
 <body>
@@ -711,7 +798,10 @@
                 <div id="ipField">
                     <label for="ipAddress" style="margin-top: 12px;">Device IP:</label>
                     <input type="text" id="ipAddress" placeholder="e.g., 192.168.1.100">
-                    <small>Auto IP detection via USB, or enter manually for Wi-Fi.</small>
+                    <small>Enter IP for direct Wi-Fi connection. Auto IP detection via USB also available when switching to Wi-Fi mode.</small>
+                    <button id="pairButton" onclick="startQrPairing()">
+                        Pair with QR Code
+                    </button>
                 </div>
             </div>
 
@@ -831,13 +921,17 @@
         </div>
     </main>
 
-	<div id="qrModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: none; justify-content: center; align-items: center; z-index: 2000;">
-
-        <div id="qrModal" class="modal-content">
+	<div id="qrModalOverlay" style="display: none;">
+        <div id="qrModal">
             <span class="close-button" onclick="hideQrModal()">×</span>
-            <h3 id="qrModalTitle"></h3>
+            <h3 id="qrModalTitle">Connect Phone to PC (Wireless Debugging)</h3>
             <p id="qrModalMessage"></p>
             <div id="qrcode"></div>
+            <div id="qrModalStatus">Initializing...</div>
+            <button id="qrConnectButton" class="button-disabled" disabled onclick="startScrcpyFromQr()">
+                 Start
+                 <span id="qrSpinner" class="spinner" style="display: none;"></span>
+            </button>
         </div>
 	</div>
 
@@ -871,7 +965,6 @@
                 body.classList.remove('light-mode');
                 localStorage.setItem('theme', 'dark');
             }
-            updateQrColors();
         });
 
         function resetHideTimeout() {
@@ -897,10 +990,6 @@
             if (ipField) {
                 ipField.style.display = mode === "wifi" ? "block" : "none";
             }
-            const ipLabel = document.querySelector("#ipField label");
-            if (ipLabel) {
-                ipLabel.style.marginTop = mode === "wifi" ? "12px" : "0";
-            }
         }
 
         function setStatus(message, isSuccess) {
@@ -908,6 +997,7 @@
             if (!statusMessageDiv) return;
 
             statusMessageDiv.style.opacity = "0";
+
             setTimeout(() => {
                 statusMessageDiv.innerText = message;
                 statusMessageDiv.className = "";
@@ -916,18 +1006,20 @@
                 if (message) {
                     statusMessageDiv.classList.add(isSuccess ? "status-success" : "status-error");
                     statusMessageDiv.style.opacity = "1";
+
                     if (isSuccess) {
                         setTimeout(() => {
                             statusMessageDiv.style.opacity = "0";
                             setTimeout(() => statusMessageDiv.innerText = "", 500);
-                        }, 4000);
+                        }, 5000);
                     }
                 } else {
-                    statusMessageDiv.style.opacity = "0";
-                    setTimeout(() => statusMessageDiv.innerText = "", 500);
+                     statusMessageDiv.style.opacity = "0";
+                     setTimeout(() => statusMessageDiv.innerText = "", 5000);
                 }
-            }, 300);
+            }, 500);
         }
+
 
         const virtualDisplayCheckbox = document.getElementById("useVirtualDisplay");
         const nativeTaskbarCheckbox = document.getElementById("useNativeTaskbar");
@@ -1040,33 +1132,14 @@
             }
         });
 
-
         var qrCode = null;
+        let qrPollingInterval = null;
 
+        // Update QR colors - kept for potential future use or if default was needed,
+        // but showQrModal now hardcodes black/white for the QR graphic itself.
+        // Modal text/background colors are handled by CSS variables and theme toggle.
         function updateQrColors() {
-             const qrcodeDiv = document.getElementById("qrcode");
-             if (!qrcodeDiv || !qrCode) return;
-
-             const currentText = qrcodeDiv.dataset.qrText;
-             if (!currentText) return;
-
-             if (qrCode && typeof qrCode.clear === 'function') {
-                 qrCode.clear();
-             }
-             qrcodeDiv.innerHTML = "";
-
-             const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
-             const cardBg = getComputedStyle(document.documentElement).getPropertyValue('--card-bg').trim();
-
-             qrCode = new QRCode(qrcodeDiv, {
-                 text: currentText,
-                 width: 160,
-                 height: 160,
-                 colorDark : textColor,
-                 colorLight : cardBg,
-                 correctLevel : QRCode.CorrectLevel.H
-             });
-             console.log("QR code colors updated for theme change.");
+             console.log("updateQrColors called. QR graphic colors are fixed black/white. Modal colors update automatically via CSS variables.");
         }
 
 
@@ -1075,9 +1148,13 @@
             const modalMessage = document.getElementById("qrModalMessage");
             const qrcodeDiv = document.getElementById("qrcode");
             const modalTitle = document.getElementById("qrModalTitle");
+            const qrModalStatus = document.getElementById("qrModalStatus");
+            const qrConnectButton = document.getElementById("qrConnectButton");
+            const qrSpinner = document.getElementById("qrSpinner");
 
-            if (!modalOverlay || !modalMessage || !qrcodeDiv || !modalTitle) {
+            if (!modalOverlay || !modalMessage || !qrcodeDiv || !modalTitle || !qrModalStatus || !qrConnectButton || !qrSpinner) {
                  console.error("QR Modal elements not found.");
+                 setStatus("Internal application error: Missing QR modal elements.", false);
                  return;
             }
 
@@ -1089,42 +1166,184 @@
             }
             qrcodeDiv.innerHTML = "";
             qrCode = null;
+            qrcodeDiv.dataset.qrText = "";
 
             console.log("Generating QR for:", qr_string);
             qrcodeDiv.dataset.qrText = qr_string;
 
             try {
-                const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-color').trim();
-                const cardBg = getComputedStyle(document.documentElement).getPropertyValue('--card-bg').trim();
-
                 qrCode = new QRCode(qrcodeDiv, {
                     text: qr_string,
-                    width: 160,
-                    height: 160,
+                    width: 180,
+                    height: 180,
                     colorDark : "#000000",
                     colorLight : "#FFFFFF",
-					correctLevel : QRCode.CorrectLevel.H // High correction level
+					correctLevel : QRCode.CorrectLevel.H
                 });
+                console.log("QR code generated with fixed black/white colors.");
+
             } catch (e) {
                  console.error("Failed to generate QR code:", e);
                  qrcodeDiv.innerHTML = "<p>Error generating QR code.</p>";
             }
 
+            qrModalStatus.innerText = "Scan the QR code on your phone...";
+            qrSpinner.style.display = "inline-block";
+            qrConnectButton.classList.add("button-disabled");
+            qrConnectButton.disabled = true;
+
             modalOverlay.style.display = "flex";
+
+            startQrPolling();
         }
 
-        function hideQrModal() {
+        async function hideQrModal() {
             const modalOverlay = document.getElementById("qrModalOverlay");
             if (modalOverlay) {
                 modalOverlay.style.display = "none";
             }
+
              if (qrCode && typeof qrCode.clear === 'function') {
                 qrCode.clear();
              }
              qrCode = null;
              const qrcodeDiv = document.getElementById("qrcode");
              if (qrcodeDiv) qrcodeDiv.dataset.qrText = "";
+             qrcodeDiv.innerHTML = "";
+
+             stopQrPolling();
+
+             try {
+                 await fetch('/cancel-qr-flow', { method: 'POST' });
+                 console.log("QR flow cancellation signal sent to backend.");
+             } catch (e) {
+                 console.error("Failed to send QR flow cancellation signal:", e);
+             }
+
 			 console.log('QR modal hidden');
+        }
+
+        function startQrPolling() {
+            stopQrPolling();
+            console.log("Starting QR status polling...");
+            qrPollingInterval = setInterval(pollQrStatus, 1000);
+        }
+
+        function stopQrPolling() {
+            if (qrPollingInterval) {
+                clearInterval(qrPollingInterval);
+                qrPollingInterval = null;
+                console.log("QR status polling stopped.");
+            }
+        }
+
+        async function pollQrStatus() {
+            const qrModalStatus = document.getElementById("qrModalStatus");
+            const qrConnectButton = document.getElementById("qrConnectButton");
+            const qrSpinner = document.getElementById("qrSpinner");
+
+             if (!qrModalStatus || !qrConnectButton || !qrSpinner) {
+                 console.error("Polling failed: QR modal elements not found.");
+                 stopQrPolling();
+                 return;
+             }
+
+            try {
+                const response = await fetch('/qr-status');
+                if (!response.ok) {
+                     console.error(`Polling failed: HTTP status ${response.status}`);
+                     qrModalStatus.innerText = `Error polling status: ${response.status}`;
+                     qrSpinner.style.display = "none";
+                     qrConnectButton.classList.add("button-disabled");
+                     qrConnectButton.disabled = true;
+                     stopQrPolling();
+                     return;
+                }
+                const status = await response.json();
+
+                if (status.qr_paired_successfully) {
+                     if (!status.qr_connected_successfully) {
+                         qrModalStatus.innerText = "Paired successfully! Connecting to device...";
+                         qrSpinner.style.display = "inline-block";
+                         qrConnectButton.classList.add("button-disabled");
+                         qrConnectButton.disabled = true;
+                     } else {
+                        qrModalStatus.innerText = "Paired & Connected Successfully!";
+                        qrSpinner.style.display = "none";
+                        qrConnectButton.classList.remove("button-disabled");
+                        qrConnectButton.disabled = false;
+                        stopQrPolling();
+                     }
+                } else if (status.qr_error) {
+                    qrModalStatus.innerText = `Pairing Error: ${status.qr_error}`;
+                    qrSpinner.style.display = "none";
+                    qrConnectButton.classList.add("button-disabled");
+                    qrConnectButton.disabled = true;
+                    stopQrPolling();
+                } else {
+                }
+
+                if (status.qr_connected_successfully || status.qr_error) {
+                     stopQrPolling();
+                }
+
+            } catch (error) {
+                console.error("Polling error:", error);
+                qrModalStatus.innerText = `Polling Error: ${error.message}`;
+                qrSpinner.style.display = "none";
+                qrConnectButton.classList.add("button-disabled");
+                qrConnectButton.disabled = true;
+                stopQrPolling();
+            }
+        }
+
+        async function startQrPairing() {
+            const pairButton = document.getElementById("pairButton");
+             if (!pairButton) return;
+
+            pairButton.classList.add("button-disabled");
+            pairButton.disabled = true;
+            setStatus("Initiating QR pairing flow...", true);
+
+            try {
+                const response = await fetch('/initiate-qr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+
+                const data = await response.json();
+
+                if (data.success === false && data.needs_qr) {
+                     setStatus(data.info || "Scan QR code on your phone.", true);
+                     showQrModal(data.qr_message, data.qr_string);
+                } else if (data.success === true && data.workflow_active) {
+                     setStatus(data.info || "QR pairing flow already active.", true);
+                     startQrPolling();
+                     showQrModal("Checking status...", "dummy"); // Show modal with a placeholder
+                }
+                else {
+                    setStatus(`Error initiating QR flow: ${data.message || 'Unknown error'}`, false);
+                }
+
+            } catch (error) {
+                console.error("Failed to initiate QR pairing flow:", error);
+                setStatus(`Error initiating QR flow: ${error.message}`, false);
+            } finally {
+                pairButton.classList.remove("button-disabled");
+                pairButton.disabled = false;
+            }
+        }
+
+        async function startScrcpyFromQr() {
+            const qrConnectButton = document.getElementById("qrConnectButton");
+            if (qrConnectButton.disabled) {
+                console.warn("Attempted to start Scrcpy from QR modal but button is disabled.");
+                return;
+            }
+
+            hideQrModal();
+            startScrcpy();
         }
 
         async function startScrcpy() {
@@ -1162,16 +1381,18 @@
 
                 const detectData = await detectResponse.json();
 
-                if (!detectData.success && detectData.needs_qr) {
-                    console.log("Device detection requires QR pairing.");
-                    setStatus(detectData.info || "Wi-Fi connection failed. Scan QR code on your phone.", false);
-                    showQrModal(detectData.qr_message, detectData.qr_string);
-                    return;
-                }
-
-
                 if (!detectResponse.ok || !detectData.success) {
-                    throw new Error(detectData.message || `Device detection failed. HTTP status: ${detectResponse.status}`);
+                    // Check if the failure is because QR pairing is needed
+                     if (detectData.needs_qr) {
+                         console.log("Device detection requires QR pairing.");
+                         setStatus(detectData.info || "Wi-Fi connection failed. Scan QR code on your phone.", false);
+                         showQrModal(detectData.qr_message, detectData.qr_string);
+                         // Do NOT throw an error here, just exit the function to let the QR flow handle it
+                         return;
+                     } else {
+                        // It's a different kind of detection error
+                         throw new Error(detectData.message || `Device detection failed. HTTP status: ${detectResponse.status}`);
+                     }
                 }
 
                 console.log("Device detection successful:", detectData);
@@ -1249,11 +1470,19 @@
 
             } catch (error) {
                 console.error("Scrcpy start or detection error:", error);
-                const errorJson = await error.response?.json().catch(() => null);
-                if (errorJson && errorJson.needs_qr) {
-                     setStatus(errorJson.info || "Wi-Fi connection failed. Scan QR code on your phone.", false);
-                     showQrModal(errorJson.qr_message, errorJson.qr_string);
-                } else {
+                // Check if the error structure indicates QR is needed (e.g., from /detect-device)
+                 const qrMatch = error.message.match(/{"success":\s*false,\s*"needs_qr":\s*true,.*?}/);
+                 if (qrMatch) {
+                      try {
+                           const errorJson = JSON.parse(qrMatch[0]);
+                           setStatus(errorJson.info || "Wi-Fi connection failed. Scan QR code on your phone.", false);
+                           showQrModal(errorJson.qr_message, errorJson.qr_string);
+                      } catch (parseError) {
+                           console.error("Failed to parse QR error message as JSON:", parseError);
+                           setStatus(`Error during Wi-Fi detection: ${error.message}`, false);
+                      }
+                 }
+                else {
                      setStatus(`Error: ${error.message}`, false);
                      const scrcpyCommandDisplay = document.getElementById("scrcpyCommandDisplay");
                      if (scrcpyCommandDisplay && scrcpyCommandDisplay.innerText.includes("Generating")) {
@@ -1313,8 +1542,7 @@
 
                 if (resultText.toLowerCase().includes("successful") || resultText.toLowerCase().includes("updated") || resultText.toLowerCase().includes("restarting")) {
                     setTimeout(() => {
-                        setStatus("Update complete. Reloading application...", true);
-                        setTimeout(() => window.location.reload(), 2000);
+                        setStatus("Update complete. Please close this window and restart the server (e.g., re-run server.ps1).", true);
                     }, 3000);
                 }
 

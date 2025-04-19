@@ -41,10 +41,13 @@ host_service_name = None
 host_service_name_full = None
 pc_local_ip = None
 
+qr_workflow_active = False
 qr_pairing_attempted = False
 qr_paired_successfully = False
 qr_connection_attempted = False
 qr_connected_successfully = False
+qr_status_message = "Idle"
+qr_error = None
 
 
 @app.route('/')
@@ -65,6 +68,9 @@ def get_local_ip_address():
         try:
              ip = socket.gethostbyname(socket.gethostname())
              log.info(f"Determined local IP using hostname: {ip}")
+             if ip.startswith('127.'):
+                 log.warning(f"Hostname fallback returned localhost ({ip}). This might not work for QR pairing across network.")
+                 return None
              return ip
         except Exception as e_inner:
             log.error(f"Hostname fallback failed: {e_inner}. Cannot get local IP.")
@@ -92,21 +98,29 @@ class AdbServiceListenerBase(ServiceListener):
         if info.addresses:
             try:
                 for addr_bytes in info.addresses:
-                    addr_str = socket.inet_ntoa(addr_bytes)
-                    if addr_str.startswith(('192.168.', '10.', '172.', '169.254.')):
-                         device_ip = addr_str
-                         break
-                if not device_ip:
-                     if info.addresses:
-                         device_ip = socket.inet_ntoa(info.addresses[0])
-                         log.debug(f"Using first address (potentially non-local IPv4 or IPv6) for {name}: {device_ip}")
+                    if len(addr_bytes) == 4:
+                        addr_str = socket.inet_ntoa(addr_bytes)
+                        device_ip = addr_str
+                        break
+
+                if not device_ip and info.addresses:
+                     try:
+                         if len(info.addresses[0]) == 4:
+                              device_ip = socket.inet_ntop(socket.AF_INET, info.addresses[0])
+                         else:
+                              log.warning(f"Found only non-IPv4 address for {name}, skipping for adb connect simplicity.")
+                              return None, None
+                     except Exception as e:
+                         log.error(f"Error decoding first address for {name}: {e}")
+                         return None, None
+
 
             except Exception as e:
-                log.error(f"Error decoding address for {name}: {e}")
+                log.error(f"Error processing addresses for {name}: {e}")
                 return None, None
 
             if not device_ip:
-                 log.warning(f"No valid IP address found in service info for {name}")
+                 log.warning(f"No usable IPv4 address found in service info for {name}")
                  return None, None
 
             log.debug(f"Found IP Address for {name}: {device_ip}")
@@ -123,7 +137,11 @@ class AdbServiceListenerBase(ServiceListener):
         return device_ip, device_port
 
     def add_service(self, zeroconf: Zeroconf, type: str, name: str):
-        global discovery_lock, phone_pairing_details, phone_connect_details, host_service_name_full
+        global discovery_lock, phone_pairing_details, phone_connect_details, host_service_name_full, qr_workflow_active, qr_stop_event
+
+        if not qr_workflow_active or qr_stop_event.is_set():
+            log.debug(f"Ignoring service discovery ({name}) as QR workflow is inactive or stopping.")
+            return
 
         if name == host_service_name_full:
             log.debug(f"Ignoring self-advertised service: {name}")
@@ -149,6 +167,9 @@ class AdbServiceListenerBase(ServiceListener):
 
 
     def remove_service(self, zeroconf: Zeroconf, type: str, name: str):
+        global qr_workflow_active
+        if not qr_workflow_active: return
+
         log.info(f"Service removed: {name} of type {type}")
 
     def update_service(self, zeroconf: Zeroconf, type: str, name: str):
@@ -158,71 +179,99 @@ class AdbServiceListenerBase(ServiceListener):
 def qr_workflow_thread_func():
     global discovery_lock
     global phone_pairing_details, phone_connect_details
-    global qr_pairing_attempted, qr_paired_successfully, qr_connection_attempted, qr_connected_successfully
-    global host_pairing_code, host_service_name_full
+    global qr_workflow_active, qr_pairing_attempted, qr_paired_successfully, qr_connection_attempted, qr_connected_successfully, qr_status_message, qr_error
+    global host_pairing_code, host_service_name_full, DEVICE_SERIAL
     global qr_stop_event, zeroconf_instance
 
     log.info("QR workflow thread started.")
+    qr_workflow_active = True
+    qr_pairing_attempted = False
+    qr_paired_successfully = False
+    qr_connection_attempted = False
+    qr_connected_successfully = False
+    qr_status_message = "Scan the QR code on your phone..."
+    qr_error = None
+    DEVICE_SERIAL = None
+
     start_time = time.time()
-    overall_timeout = 120
+    overall_timeout = 180
 
-    while not qr_stop_event.is_set() and (time.time() - start_time) < overall_timeout:
-        try:
-            if not qr_pairing_attempted:
-                 p_details = None
-                 with discovery_lock:
-                     if phone_pairing_details:
-                         p_details = list(phone_pairing_details)
-                         phone_pairing_details.clear()
+    try:
+        while not qr_stop_event.is_set() and (time.time() - start_time) < overall_timeout:
+            try:
+                if not qr_pairing_attempted:
+                     p_details = None
+                     with discovery_lock:
+                         if phone_pairing_details:
+                             p_details = list(phone_pairing_details)
+                             phone_pairing_details.clear()
 
-                 if p_details:
-                     p_ip, p_port = p_details
-                     qr_pairing_attempted = True
-                     log.info(f"Attempting adb pair to {p_ip}:{p_port} with code {host_pairing_code}")
-                     qr_paired_successfully = run_adb_pair(p_ip, p_port, host_pairing_code)
-                     if qr_paired_successfully:
-                         log.info("adb pair command reported success.")
-                         start_time = time.time()
-                     else:
-                         log.warning("adb pair command reported failure.")
-                         print("\nPairing failed. Please check logs and try again.")
-                         qr_stop_event.set()
+                     if p_details:
+                         p_ip, p_port = p_details
+                         qr_pairing_attempted = True
+                         qr_status_message = f"Phone pairing service discovered at {p_ip}:{p_port}. Attempting pairing..."
+                         log.info(f"Attempting adb pair to {p_ip}:{p_port} with code {host_pairing_code}")
+                         pair_success = run_adb_pair(p_ip, p_port, host_pairing_code)
+                         if pair_success:
+                             qr_paired_successfully = True
+                             qr_status_message = "Pairing successful! Waiting for connection service..."
+                             log.info("adb pair command reported success.")
+                             start_time = time.time()
+                         else:
+                             qr_error = "ADB pairing failed. Check phone and try again."
+                             qr_status_message = qr_error
+                             log.warning("adb pair command reported failure.")
+                             qr_stop_event.set()
 
+                elif qr_paired_successfully and not qr_connection_attempted:
+                     c_details = None
+                     with discovery_lock:
+                         if phone_connect_details:
+                             c_details = list(phone_connect_details)
+                             phone_connect_details.clear()
 
-            if qr_paired_successfully and not qr_connection_attempted:
-                 c_details = None
-                 with discovery_lock:
-                     if phone_connect_details:
-                         c_details = list(phone_connect_details)
-                         phone_connect_details.clear()
+                     if c_details:
+                         c_ip, c_port = c_details
+                         qr_connection_attempted = True
+                         qr_status_message = f"Phone connect service discovered at {c_ip}:{c_port}. Attempting connection..."
+                         log.info(f"Attempting adb connect to {c_ip}:{c_port}")
+                         connect_success = run_adb_connect(c_ip, c_port)
+                         if connect_success:
+                             qr_connected_successfully = True
+                             DEVICE_SERIAL = f"{c_ip}:{c_port}"
+                             qr_status_message = f"Connection successful! Device: {DEVICE_SERIAL}"
+                             log.info(f"adb connect command reported success. DEVICE_SERIAL set to {DEVICE_SERIAL}")
+                             qr_stop_event.set()
+                         else:
+                             qr_error = "ADB connection failed after pairing. Try pressing 'Start' manually or restart the app."
+                             qr_status_message = qr_error
+                             log.warning("adb connect command reported failure.")
+                             qr_stop_event.set()
 
-                 if c_details:
-                     c_ip, c_port = c_details
-                     qr_connection_attempted = True
-                     log.info(f"Attempting adb connect to {c_ip}:{c_port}")
-                     qr_connected_successfully = run_adb_connect(c_ip, c_port)
-                     if qr_connected_successfully:
-                         log.info("adb connect command reported success.")
-                         print("\nConnection successful!")
-                         qr_stop_event.set()
-                     else:
-                         log.warning("adb connect command reported failure.")
-                         print("\nConnection failed after pairing. Please check logs and try again.")
-                         qr_stop_event.set()
+            except Exception as e:
+                log.error(f"Error in QR workflow thread step: {e}", exc_info=True)
+                qr_error = f"Workflow Error: {e}"
+                qr_status_message = qr_error
+                qr_stop_event.set()
 
-        except Exception as e:
-            log.error(f"Error in QR workflow thread: {e}", exc_info=True)
-            qr_stop_event.set()
+            time.sleep(0.5)
 
-        time.sleep(0.5)
+        if not qr_stop_event.is_set() and (time.time() - start_time) >= overall_timeout:
+             log.warning("QR workflow thread timed out.")
+             if not qr_paired_successfully:
+                  qr_error = qr_error or "Pairing process timed out. Check phone settings and network."
+             elif not qr_connected_successfully:
+                  qr_error = qr_error or "Connection process timed out after pairing. Try connecting manually."
+             else:
+                  qr_error = qr_error or "QR workflow timed out."
 
-    log.info("QR workflow thread finished.")
-    if not qr_paired_successfully and not qr_stop_event.is_set():
-         log.warning("QR workflow thread timed out waiting for pairing/connection.")
-         print("\nQR pairing/connection process timed out.")
+             qr_status_message = qr_error
+             print("\nQR pairing/connection process timed out.")
 
-    stop_zeroconf()
-
+    finally:
+        log.info("QR workflow thread finishing.")
+        qr_workflow_active = False
+        stop_zeroconf()
 
 def stop_zeroconf():
     global zeroconf_instance
@@ -236,16 +285,37 @@ def stop_zeroconf():
         finally:
              zeroconf_instance = None
 
-def initiate_qr_pairing_flow():
+@app.route('/initiate-qr', methods=['POST'])
+def initiate_qr():
     global zeroconf_instance, qr_stop_event
     global host_pairing_code, host_service_name, host_service_name_full, pc_local_ip
     global phone_pairing_details, phone_connect_details
-    global qr_pairing_attempted, qr_paired_successfully, qr_connection_attempted, qr_connected_successfully
+    global qr_workflow_active, qr_pairing_attempted, qr_paired_successfully, qr_connection_attempted, qr_connected_successfully, qr_status_message, qr_error
+    global DEVICE_SERIAL
 
-    log.info("Initiating QR pairing flow...")
+    log.info("Received /initiate-qr request.")
+
+    if qr_workflow_active:
+        log.info("QR workflow already active. Returning current status.")
+        qr_string = f"WIFI:T:ADB;S:{host_service_name};P:{host_pairing_code};;" if host_service_name and host_pairing_code else ""
+        return jsonify({
+             'success': True,
+             'workflow_active': True,
+             'qr_string': qr_string,
+             'qr_message': qr_status_message,
+             'qr_status': {
+                 'workflow_active': qr_workflow_active,
+                 'qr_paired_successfully': qr_paired_successfully,
+                 'qr_connected_successfully': qr_connected_successfully,
+                 'qr_status_message': qr_status_message,
+                 'qr_error': qr_error
+             },
+             'info': qr_status_message # Also send current status for main message bar
+        })
+
 
     if zeroconf_instance is not None:
-        log.info("Existing Zeroconf instance found. Stopping it before starting new flow.")
+        log.info("Existing Zeroconf instance found during new initiation. Stopping.")
         qr_stop_event.set()
         time.sleep(1)
         stop_zeroconf()
@@ -253,15 +323,22 @@ def initiate_qr_pairing_flow():
     qr_stop_event.clear()
     phone_pairing_details.clear()
     phone_connect_details.clear()
+    qr_workflow_active = True
     qr_pairing_attempted = False
     qr_paired_successfully = False
     qr_connection_attempted = False
     qr_connected_successfully = False
+    qr_status_message = "Initializing QR pairing..."
+    qr_error = None
+    DEVICE_SERIAL = None
 
     pc_local_ip = get_local_ip_address()
     if not pc_local_ip:
         log.error("Failed to get local PC IP. Cannot initiate QR flow.")
-        return {'success': False, 'message': 'Could not determine PC IP address for QR pairing.'}
+        qr_workflow_active = False
+        qr_error = 'Could not determine PC IP address for QR pairing.'
+        qr_status_message = qr_error
+        return jsonify({'success': False, 'message': qr_error, 'needs_qr': False})
 
     hostname = socket.gethostname().split('.')[0]
     random_part = generate_random_string(4)
@@ -269,13 +346,10 @@ def initiate_qr_pairing_flow():
     host_pairing_code = generate_pairing_code()
     host_service_name_full = f"{host_service_name}.{ADB_PAIRING_SERVICE_TYPE}"
 
+    # QR string format: WIFI:T:ADB;S:<service_name>;P:<pairing_code>;;
     qr_string = f"WIFI:T:ADB;S:{host_service_name};P:{host_pairing_code};;"
 
-    log.info(f"Generated Host Info:")
-    log.info(f"  IP Address: {pc_local_ip}")
-    log.info(f"  Service Name (S): {host_service_name}")
-    log.info(f"  Pairing Code (P): {host_pairing_code}")
-    log.info(f"  QR String: {qr_string}")
+    log.info(f"Generated Host Info for QR Pairing: IP={pc_local_ip}, Service Name={host_service_name}, Pairing Code={host_pairing_code}")
 
     try:
         zeroconf_instance = Zeroconf()
@@ -298,8 +372,8 @@ def initiate_qr_pairing_flow():
 
         pairing_listener = AdbServiceListenerBase()
         connect_listener = AdbServiceListenerBase()
-        pairing_browser = ServiceBrowser(zeroconf_instance, ADB_PAIRING_SERVICE_TYPE, pairing_listener)
-        connect_browser = ServiceBrowser(zeroconf_instance, ADB_CONNECT_SERVICE_TYPE, connect_listener)
+        ServiceBrowser(zeroconf_instance, ADB_PAIRING_SERVICE_TYPE, pairing_listener)
+        ServiceBrowser(zeroconf_instance, ADB_CONNECT_SERVICE_TYPE, connect_listener)
         log.info("Zeroconf Service Browsers started.")
 
         qr_workflow_thread = threading.Thread(target=qr_workflow_thread_func, daemon=True)
@@ -309,24 +383,48 @@ def initiate_qr_pairing_flow():
     except Exception as e:
         log.critical(f"Failed to initiate Zeroconf or workflow thread: {e}", exc_info=True)
         stop_zeroconf()
-        return {'success': False, 'message': f'Failed to start QR pairing services: {e}.'}
+        qr_workflow_active = False
+        qr_error = f'Failed to start QR pairing services: {e}.'
+        qr_status_message = qr_error
+        return jsonify({'success': False, 'message': qr_error, 'needs_qr': False})
 
-    qr_message = (
+    qr_status_message = (
         "Scan this QR code on your phone using the 'Pair device with QR code' option "
         "in Developer options -> Wireless debugging. "
-        f"Ensure your PC ({pc_local_ip}) and phone are on the same Wi-Fi network."
-        "\n\nAfter scanning and authorization (if prompted), close this window and press 'Start' again."
+        f"Ensure your PC and phone are on the same Wi-Fi network."
+        "\n\nAfter scanning press the Start button."
+        "\n\nIf you have issues with pairing re-enable wireless debugging and try again."
     )
 
-    return {
+    return jsonify({
         'success': False,
         'needs_qr': True,
         'qr_string': qr_string,
-        'qr_message': qr_message,
+        'qr_message': qr_status_message,
         'host_ip': pc_local_ip,
         'pairing_code': host_pairing_code,
-        'info': 'Wi-Fi connection failed. Scan the QR code on your phone using Wireless Debugging, then press Start again.'
-    }
+        'info': 'QR pairing initiated. Scan the code on your device.'
+    })
+
+@app.route('/qr-status', methods=['GET'])
+def get_qr_status():
+    global qr_workflow_active, qr_paired_successfully, qr_connected_successfully, qr_status_message, qr_error
+    return jsonify({
+        'workflow_active': qr_workflow_active,
+        'qr_paired_successfully': qr_paired_successfully,
+        'qr_connected_successfully': qr_connected_successfully,
+        'qr_status_message': qr_status_message,
+        'qr_error': qr_error,
+        'device_serial': DEVICE_SERIAL
+    })
+
+@app.route('/cancel-qr-flow', methods=['POST'])
+def cancel_qr_flow():
+    global qr_stop_event, qr_workflow_active
+    log.info("Received /cancel-qr-flow request. Setting stop event.")
+    qr_stop_event.set()
+    qr_workflow_active = False
+    return jsonify({'success': True, 'message': 'QR workflow cancellation requested.'})
 
 
 def classify_devices(devices):
@@ -337,7 +435,7 @@ def classify_devices(devices):
             network_devices.append(device)
         elif ':' not in device:
             usb_devices.append(device)
-    print(f"Classified USB: {usb_devices}, Network: {network_devices}")
+    log.debug(f"Classified USB: {usb_devices}, Network: {network_devices}")
     return usb_devices, network_devices
 
 def run_adb_command(args, serial=None, check=False, timeout=10, input_text=None):
@@ -363,7 +461,10 @@ def run_adb_command(args, serial=None, check=False, timeout=10, input_text=None)
         raise FileNotFoundError(f"'{ADB_PATH}' command not found. Ensure ADB is installed and in your system's PATH.")
     except subprocess.CalledProcessError as e:
         log.error(f"  Command Failed: {e.stderr.strip()}")
-        raise e
+        error_message = f"ADB command failed ({' '.join(args)}):\n{e.stderr.strip()}"
+        if e.stdout.strip():
+             error_message += f"\n{e.stdout.strip()}"
+        raise subprocess.CalledProcessError(e.returncode, e.cmd, output=e.stdout, stderr=error_message)
     except Exception as e:
         log.error(f"  An unexpected error occurred while running adb: {e}", exc_info=True)
         raise e
@@ -373,13 +474,15 @@ def run_adb_pair(device_ip, device_port, pairing_code_to_use):
     log.info(f"Attempting to pair with device {device_ip}:{device_port} using code {pairing_code_to_use}...")
     command = ["pair", f"{device_ip}:{device_port}"]
     try:
-        result = run_adb_command(command, input_text=f"{pairing_code_to_use}\n", timeout=20)
-        if result.returncode == 0 and ("Successfully paired" in result.stdout or "already paired" in result.stdout):
+        result = run_adb_command(command, input_text=f"{pairing_code_to_use}\n", timeout=30)
+        output = result.stdout + result.stderr
+        if result.returncode == 0 and ("Successfully paired" in output or "already paired" in output):
             log.info("Pairing command reported SUCCESS!")
             print(">>> ADB Pairing SUCCESS!")
             return True
         else:
             log.warning("Pairing command reported FAILURE.")
+            log.warning(f"ADB Output:\n{output}")
             print(">>> ADB Pairing FAILED.")
             return False
     except Exception as e:
@@ -392,13 +495,15 @@ def run_adb_connect(device_ip, connect_port):
     log.info(f"Attempting to connect to device {device_ip}:{connect_port}...")
     command = ["connect", f"{device_ip}:{connect_port}"]
     try:
-        result = run_adb_command(command, timeout=10)
-        if result.returncode == 0 and ("connected to" in result.stdout or "already connected to" in result.stdout):
+        result = run_adb_command(command, timeout=15)
+        output = result.stdout + result.stderr
+        if result.returncode == 0 and ("connected to" in output or "already connected to" in output):
             log.info("Connect command reported SUCCESS!")
             print(">>> ADB Connect SUCCESS!")
             return True
         else:
             log.warning("Connect command reported FAILURE.")
+            log.warning(f"ADB Output:\n{output}")
             print(">>> ADB Connect FAILED.")
             return False
     except Exception as e:
@@ -410,38 +515,50 @@ def run_adb_connect(device_ip, connect_port):
 def get_device_ip(serial):
     log.info(f"Attempting to get IP for device: {serial}")
     try:
-        ip_result = run_adb_command(['shell', 'ip', 'route'], serial=serial)
-        if ip_result.returncode == 0:
-            for line in ip_result.stdout.splitlines():
-                if ' src ' in line and ('wlan0' in line or 'ccmni' in line or 'rmnet' in line):
-                    match = re.search(r' src (\d+\.\d+\.\d+\.\d+)', line)
-                    if match:
-                         log.info(f"  Found IP in route for wlan0/mobile: {match.group(1)}")
-                         return match.group(1)
+        interfaces = ['wlan0', 'eth0', 'ccmni0', 'rmnet_data0']
+        for iface in interfaces:
+            log.debug(f"  Checking interface: {iface}")
+            ip_result = run_adb_command(['shell', 'ip', 'addr', 'show', iface], serial=serial, timeout=5)
+            if ip_result.returncode == 0:
+                match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', ip_result.stdout)
+                if match:
+                    ip_address = match.group(1)
+                    if not ip_address.startswith('127.'):
+                        log.info(f"  Found IP on {iface} using 'ip addr show': {ip_address}")
+                        return ip_address
 
-        ip_result_addr = run_adb_command(['shell', 'ip', 'addr', 'show', 'wlan0'], serial=serial)
-        if ip_result_addr.returncode == 0 and 'inet ' in ip_result_addr.stdout:
-            match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', ip_result_addr.stdout)
-            if match:
-                log.info(f"  Found IP on wlan0 using ip addr: {match.group(1)}")
-                return match.group(1)
+            ip_route_result = run_adb_command(['shell', 'ip', 'route', 'show', 'dev', iface], serial=serial, timeout=5)
+            if ip_route_result.returncode == 0:
+                 match = re.search(r' src (\d+\.\d+\.\d+\.\d+)', ip_route_result.stdout)
+                 if match:
+                      ip_address = match.group(1)
+                      if not ip_address.startswith('127.'):
+                           log.info(f"  Found IP on {iface} using 'ip route show': {ip_address}")
+                           return ip_address
 
-        ip_result_all = run_adb_command(['shell', 'ip', 'addr'], serial=serial)
+        log.debug("  Specific interface checks failed. Checking all interfaces via 'ip addr'.")
+        ip_result_all = run_adb_command(['shell', 'ip', 'addr'], serial=serial, timeout=5)
         if ip_result_all.returncode == 0:
              for line in ip_result_all.stdout.splitlines():
                  if 'inet ' in line and 'scope global' in line:
                      match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', line)
-                     if match and not match.group(1).startswith('127.'):
-                         log.info(f"  Found global IP: {match.group(1)}")
-                         return match.group(1)
+                     if match:
+                         ip_address = match.group(1)
+                         if not ip_address.startswith('127.'):
+                             log.info(f"  Found global scope IP using 'ip addr': {ip_address}")
+                             return ip_address
+
              for line in ip_result_all.stdout.splitlines():
                  if 'inet ' in line:
                      match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)/\d+', line)
-                     if match and not match.group(1).startswith('127.'):
-                          log.info(f"  Found non-localhost IP: {match.group(1)}")
-                          return match.group(1)
+                     if match:
+                         ip_address = match.group(1)
+                         if not ip_address.startswith('127.'):
+                              log.info(f"  Found any non-localhost IP using 'ip addr': {ip_address}")
+                              return ip_address
 
-        log.warning(f"  Could not determine IP address for {serial}.")
+
+        log.warning(f"  Could not determine IP address for {serial} after trying common methods.")
         return None
     except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
         log.error(f"  Error getting IP for {serial}: {e}")
@@ -451,47 +568,48 @@ def get_device_ip(serial):
 def get_device_model(serial):
     log.info(f"Attempting to get model for device: {serial}")
     try:
-        model_result = run_adb_command(['shell', 'getprop', 'ro.product.model'], serial=serial)
+        model_result = run_adb_command(['shell', 'getprop', 'ro.product.model'], serial=serial, timeout=5)
         if model_result.returncode == 0:
             model = model_result.stdout.strip()
             log.info(f"  Found model: {model}")
-            return model
-        log.warning("  Could not determine model.")
+            return model if model else "Unknown"
+        log.warning("  Could not determine model using 'ro.product.model'. Trying 'ro.product.device'.")
+        device_result = run_adb_command(['shell', 'getprop', 'ro.product.device'], serial=serial, timeout=5)
+        if device_result.returncode == 0:
+             device = device_result.stdout.strip()
+             log.info(f"  Found device name: {device}")
+             return device if device else "Unknown"
+
+        log.warning("  Could not determine model or device name.")
         return "Unknown"
     except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
-        log.error(f"  Error getting model for {serial}: {e}")
-        return "Error Fetching Model"
-
+        log.error(f"  Error getting model/device for {serial}: {e}")
+        return "Error Fetching Info"
 
 @app.route('/detect-device', methods=['POST'])
 def detect_device():
     global DEVICE_SERIAL
-    # --- Safely get JSON data ---
+
     data = request.json
     if data is None:
         log.error("Received /detect-device request with invalid/missing JSON body.")
-        return jsonify({'success': False, 'message': 'Invalid request format (missing JSON data).'}), 400 # Bad Request
+        return jsonify({'success': False, 'message': 'Invalid request format (missing JSON data).'}), 400
 
-    # --- Safely get mode and ip_input ---
     mode = data.get('mode')
-    # Use 'or' short-circuiting to handle potential None from get() before stripping
     ip_input = (data.get('ip') or '').strip()
 
     log.info(f"Received /detect-device request (Mode: {mode}, IP: '{ip_input}')")
 
-    # --- Rest of the logic remains the same ---
     try:
-        # Always run adb devices first
         devices_result = run_adb_command(['devices'], check=True)
         all_devices = [line.split('\t')[0] for line in devices_result.stdout.splitlines()[1:] if '\tdevice' in line]
         log.info(f"ADB detected active devices: {all_devices}")
 
         usb_devices, network_devices = classify_devices(all_devices)
-        DEVICE_SERIAL = None # Reset at the start
+        DEVICE_SERIAL = None
 
 
         if mode == 'usb':
-            # (USB logic remains the same)
             if not usb_devices:
                 log.warning("Mode 'usb' selected, but no USB devices found.")
                 return jsonify({'success': False, 'message': 'No USB device detected. Ensure device is connected and USB debugging is enabled.'})
@@ -504,32 +622,31 @@ def detect_device():
 
         elif mode == 'wifi':
             wifi_device_serial = None
+            device_found_or_attempted = False
 
-            # --- Priority 1: Check for existing network connections ---
             if network_devices:
+                device_found_or_attempted = True
                 selected_network_device = network_devices[0]
                 log.info(f"Found existing connected network device: {selected_network_device}. Validating...")
                 try:
                     run_adb_command(['get-state'], serial=selected_network_device, check=True, timeout=5)
-                    DEVICE_SERIAL = selected_network_device # Set global serial upon validation
+                    DEVICE_SERIAL = selected_network_device
                     target_ip = DEVICE_SERIAL.split(':')[0]
                     model = get_device_model(DEVICE_SERIAL)
                     log.info(f"Successfully validated existing network device {DEVICE_SERIAL}. Model: {model}")
                     return jsonify({'success': True, 'model': model, 'ip': target_ip, 'serial': DEVICE_SERIAL})
                 except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
                     log.warning(f"Existing network device {selected_network_device} listed but failed validation check: {e}. Continuing detection...")
-                    DEVICE_SERIAL = None # Ensure it's None if validation failed
+                    DEVICE_SERIAL = None
 
-            # --- Priority 2: Try user-provided IP (if Prio 1 didn't succeed) ---
             if ip_input and not DEVICE_SERIAL:
-                # (User IP logic remains the same)
+                device_found_or_attempted = True
                 if ':' not in ip_input:
                     wifi_device_serial = f"{ip_input}:5555"
                 else:
                     wifi_device_serial = ip_input
 
                 log.info(f"Attempting direct connect to user-provided address: {wifi_device_serial}")
-                # ... (rest of connect logic)
                 try:
                     run_adb_command(['disconnect', wifi_device_serial], timeout=5)
                     time.sleep(0.5)
@@ -539,7 +656,7 @@ def detect_device():
                 try:
                     connect_result = run_adb_command(['connect', wifi_device_serial], check=True, timeout=15)
                     if 'connected to' in connect_result.stdout or 'already connected' in connect_result.stdout:
-                         DEVICE_SERIAL = wifi_device_serial # Set global serial
+                         DEVICE_SERIAL = wifi_device_serial
                          target_ip = DEVICE_SERIAL.split(':')[0]
                          model = get_device_model(DEVICE_SERIAL)
                          log.info(f"Successfully connected to {DEVICE_SERIAL} via user-provided address. Model: {model}")
@@ -549,10 +666,9 @@ def detect_device():
                 except Exception as e:
                     log.warning(f"Exception during direct connect attempt to {wifi_device_serial}: {e}")
 
-
-            # --- Priority 3: Try auto-detection via USB (if Prio 1/2 didn't succeed AND NO user IP was given) ---
+            # Only attempt if a user IP was NOT provided AND there's a USB device and we haven't found a device yet
             if not ip_input and usb_devices and not DEVICE_SERIAL:
-                # (USB auto-detect logic remains the same)
+                device_found_or_attempted = True
                 usb_serial_for_ip = usb_devices[0]
                 log.info(f"No user IP provided. Using USB device {usb_serial_for_ip} for IP detection and TCP/IP setup.")
                 detected_ip = get_device_ip(usb_serial_for_ip)
@@ -571,7 +687,7 @@ def detect_device():
                              log.debug(f"Ignoring disconnect error for {wifi_device_serial}: {e}")
                         connect_result = run_adb_command(['connect', wifi_device_serial], check=True, timeout=15)
                         if 'connected to' in connect_result.stdout or 'already connected' in connect_result.stdout:
-                            DEVICE_SERIAL = wifi_device_serial # Set global serial
+                            DEVICE_SERIAL = wifi_device_serial
                             model = get_device_model(DEVICE_SERIAL)
                             log.info(f"Successfully connected to {DEVICE_SERIAL} via USB auto-detect. Model: {model}")
                             return jsonify({'success': True, 'model': model, 'ip': target_ip, 'serial': DEVICE_SERIAL})
@@ -582,38 +698,67 @@ def detect_device():
                 else:
                     log.warning(f"Could not auto-detect IP address from USB device {usb_serial_for_ip}. Cannot use USB auto-detect method.")
 
+            if mode == 'wifi' and not DEVICE_SERIAL:
+                 message = "Could not connect via Wi-Fi."
+                 if ip_input:
+                      message += f" Failed to connect to {ip_input}. Ensure the device is on the network and wireless debugging is enabled."
+                 elif usb_devices:
+                      message += " Failed to auto-detect IP via USB or connect. Ensure the device is connected via USB and wireless debugging is enabled."
+                 else:
+                      message += " No network devices found, no IP provided, and no USB device to auto-detect from. Ensure device is on the network or connected via USB."
 
-            # --- Fallback: Initiate QR Pairing Flow ---
-            if not DEVICE_SERIAL:
-                log.info("No usable Wi-Fi connection found/established via existing, user input, or USB auto-detect. Initiating QR pairing flow.")
-                qr_data = initiate_qr_pairing_flow()
-                return jsonify(qr_data)
-            else:
-                 # Safeguard case
-                log.error("Reached unexpected state at the end of Wi-Fi detection. DEVICE_SERIAL is set but function didn't return.")
-                target_ip = DEVICE_SERIAL.split(':')[0]
-                model = get_device_model(DEVICE_SERIAL)
-                return jsonify({'success': True, 'model': model, 'ip': target_ip, 'serial': DEVICE_SERIAL, 'message': 'Connected (unexpected final state)'})
+                 # Add suggestion for QR pairing if it's a Wi-Fi issue
+                 qr_suggestion = " If your device supports it, try 'Pair with QR Code' from the Connection section."
+                 message += qr_suggestion
 
-        else: # Invalid mode
-            # Check if mode itself was None
-            if mode is None:
-                 log.warning("Request received with missing 'mode' field in JSON data.")
-                 return jsonify({'success': False, 'message': "Invalid request format (missing 'mode')."}), 400
-            else:
-                 log.warning(f"Invalid connection mode specified: {mode}")
-                 return jsonify({'success': False, 'message': 'Invalid connection mode specified'})
+                 log.warning(message)
+
+                 # Return information needed for QR pairing if it's a likely Wi-Fi/pairing issue
+                 if not qr_workflow_active and pc_local_ip:
+                     hostname = socket.gethostname().split('.')[0]
+                     random_part = generate_random_string(4)
+                     host_service_name = f"PyAutoADB-{hostname}-{random_part}"
+                     host_pairing_code = generate_pairing_code()
+                     qr_string_for_info = f"WIFI:T:ADB;S:{host_service_name};P:{host_pairing_code};;"
+                     qr_message_for_info = (
+                         "Wi-Fi connection failed. Try manual IP or QR pairing."
+                         "\n\nScan the QR code below if your device supports 'Pair device with QR code' in Developer Options -> Wireless debugging."
+                         "\nEnsure your PC and phone are on the same Wi-Fi network."
+                         "\n\nAfter scanning, press the Start button on the modal."
+                     )
+                     return jsonify({
+                         'success': False,
+                         'message': message, # Primary error message for main status
+                         'needs_qr': True,
+                         'qr_string': qr_string_for_info,
+                         'qr_message': qr_message_for_info,
+                         'host_ip': pc_local_ip,
+                         'pairing_code': host_pairing_code,
+                         'info': message # Also send for main status bar
+                     })
+                 else:
+                      # If QR workflow is already active or IP not found for QR, just return the basic error
+                     return jsonify({'success': False, 'message': message, 'needs_qr': False})
+
+
+        elif mode is None:
+             log.warning("Request received with missing 'mode' field in JSON data.")
+             return jsonify({'success': False, 'message': "Invalid request format (missing 'mode')."}), 400
+        else:
+             log.warning(f"Invalid connection mode specified: {mode}")
+             return jsonify({'success': False, 'message': 'Invalid connection mode specified'})
 
     except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
-        # (Error handling remains the same)
         log.error(f"ADB Operation Error in /detect-device: {str(e)}")
         DEVICE_SERIAL = None
         return jsonify({'success': False, 'message': f'ADB Operation Error: {str(e)}. Is ADB installed and in PATH?'})
     except Exception as e:
-        # (Error handling remains the same)
         log.critical(f"An unexpected server error occurred in /detect-device: {e}", exc_info=True)
         DEVICE_SERIAL = None
         return jsonify({'success': False, 'message': f'An unexpected server error occurred: {str(e)}'})
+
+    log.error("Detect device function reached end without returning a response. This is an internal error.")
+    return jsonify({'success': False, 'message': 'Internal server error: Detection logic failed to return.'}), 500
 
 @app.route('/connect-device', methods=['POST'])
 def connect_device():
@@ -659,7 +804,7 @@ def reset_display(serial):
         run_adb_command(['shell', 'settings', 'put', 'global', 'overlay_display_devices', 'none'], serial=serial, timeout=5)
         run_adb_command(['shell', 'wm', 'size', 'reset'], serial=serial, timeout=5)
         run_adb_command(['shell', 'wm', 'density', 'reset'], serial=serial, timeout=5)
-        run_adb_command(['shell', 'settings', 'put', 'system', 'user_rotation', '0'], serial=serial, timeout=5)
+        
         print(f"Display settings reset for {serial}.")
         time.sleep(1)
     except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
@@ -761,13 +906,17 @@ def start_scrcpy():
         print(f"Verifying device connection: {DEVICE_SERIAL}")
         run_adb_command(['get-state'], serial=DEVICE_SERIAL, check=True, timeout=5)
         print("Device connection verified.")
-    except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
+    except (subprocess.CalledProcessError, TimeoutExpired, FileNotFoundError) as e:
         print(f"Error: Device {DEVICE_SERIAL} connection lost: {e}.")
         current_serial = DEVICE_SERIAL
         DEVICE_SERIAL = None
         return f'Error: Device {current_serial} connection lost: {e}. Please re-detect.', 500
 
     data = request.json
+    if data is None:
+        log.error("Received /start-scrcpy request with invalid/missing JSON body.")
+        return 'Error: Invalid request format (missing JSON data).', 400
+
     print(f"Received Scrcpy Config: {data}")
 
     resolution = data.get('resolution')
@@ -805,7 +954,7 @@ def start_scrcpy():
         apply_rotation_lock_param = False
         reset_needed = True
         height = None
-
+        
         if resolution:
             try:
                 print(f"  Attempting to set resolution: {resolution}")
@@ -848,15 +997,6 @@ def start_scrcpy():
                 reset_needed = True
             except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
                  print(f"  Failed to set density: {e}. Skipping.")
-
-
-        try:
-            print("  Setting rotation to landscape.")
-            run_adb_command(['shell', 'settings', 'put', 'system', 'user_rotation', '1'], serial=DEVICE_SERIAL, check=True)
-            print("  Rotation set OK.")
-            reset_needed = True
-        except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
-             print(f"  Failed to set rotation: {e}. Skipping.")
 
 
     else:
@@ -971,6 +1111,7 @@ def update_app():
              return "Update successful! Please close this window and restart the server (e.g., re-run server.ps1)."
         else:
              print("Update partially completed with warnings.")
+             # Return 200 even if partial, as some files might have updated
              return "Update partially completed with warnings. Check console log. Restart required.", 200
 
     except requests.exceptions.RequestException as e:

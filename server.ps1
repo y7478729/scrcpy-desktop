@@ -271,7 +271,6 @@ function Reset-Display {
     Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 -successPattern "" | Out-Null
     Invoke-AdbCommand "adb -s $serial shell wm size reset" -timeoutSeconds 5 -successPattern "" | Out-Null
     Invoke-AdbCommand "adb -s $serial shell wm density reset" -timeoutSeconds 5 -successPattern "" | Out-Null
-    Invoke-AdbCommand "adb -s $serial shell settings put system user_rotation 0" -timeoutSeconds 5 -successPattern "" | Out-Null
     Write-Host "Display settings reset complete."
 }
 
@@ -332,6 +331,24 @@ try {
 			$response.Close()
 		}
 
+        elseif ($request.Url.LocalPath -eq "/initiate-qr") {
+            Write-Host "Received request for unsupported endpoint: /initiate-qr"
+            $response.ContentType = "application/json"
+            $response.StatusCode = 200
+            $dummyResponse = @{
+                success = $false
+                message = "QR code functionality is not supported by the PowerShell server."
+                needs_qr = $false
+            } | ConvertTo-Json
+            $buffer = [System.Text.Encoding]::UTF8.GetBytes($dummyResponse)
+            $response.ContentLength64 = $buffer.Length
+            try {
+                $response.OutputStream.Write($buffer, 0, $buffer.Length)
+            } catch { Write-Error "Failed to write response for dummy /initiate-qr: $_" }
+            $response.Close()
+        }
+
+		
         elseif ($request.Url.LocalPath -eq "/connect-device") {
             $response.ContentType = "application/json"
             try {
@@ -458,15 +475,6 @@ try {
                         }
                     }
 
-                    try {
-                         Write-Host "  Setting rotation to landscape."
-                         $rotationResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings put system user_rotation 1" -timeoutSeconds 5
-                         if (-not $rotationResult.Success) { throw ("{0}" -f $rotationResult.Stderr) }
-                         Write-Host "  Rotation set OK."
-                         $resetNeeded = $true
-                    } catch {
-                        Write-Warning ("  Failed to set rotation: {0}. $_" -f $_.Exception.Message)
-                    }
                 }
                 else {
                     Write-Host "Mode: Default selected."
@@ -513,7 +521,6 @@ try {
                     $batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`r`n"
                     $batContent += "adb -s $global:deviceSerial shell wm size reset`r`n"
                     $batContent += "adb -s $global:deviceSerial shell wm density reset`r`n"
-                    $batContent += "adb -s $global:deviceSerial shell settings put system user_rotation 0`r`n"
                 }
 
                 if (-not (Test-Path $scriptDir)) { New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null }
