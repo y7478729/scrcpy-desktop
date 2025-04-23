@@ -6,6 +6,30 @@ $scrcpyBatFilePath = Join-Path $scriptDir "scrcpy-command.bat"
 
 $global:deviceSerial = $null
 $global:dynamicDisplayID = $null
+$global:rotationStates = @{}
+
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ConsoleCtrl {
+    public delegate bool HandlerRoutine(int ctrlType);
+    [DllImport("Kernel32")]
+    public static extern bool SetConsoleCtrlHandler(HandlerRoutine handler, bool add);
+}
+"@
+
+$global:serverRunning = $true
+
+function Register-ConsoleCtrlHandler {
+    $handler = {
+        param($ctrlType)
+        Write-Host "Received console control event (Ctrl+C or close): $ctrlType"
+        $global:serverRunning = $false
+        $true
+    }
+    $delegate = [ConsoleCtrl+HandlerRoutine]$handler
+    [ConsoleCtrl]::SetConsoleCtrlHandler($delegate, $true) | Out-Null
+}
 
 function Invoke-AdbCommand {
     param (
@@ -266,18 +290,50 @@ function Reset-Display {
     param (
         [string]$serial
     )
-    Write-Host "Resetting display settings for device: $serial"
+    Write-Host "Resetting display and rotation settings for device: $serial"
 
-    Invoke-AdbCommand "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 -successPattern "" | Out-Null
-    Invoke-AdbCommand "adb -s $serial shell wm size reset" -timeoutSeconds 5 -successPattern "" | Out-Null
-    Invoke-AdbCommand "adb -s $serial shell wm density reset" -timeoutSeconds 5 -successPattern "" | Out-Null
-    Write-Host "Display settings reset complete."
+    # Reset display settings
+    Invoke-AdbCommand -command "adb -s $serial shell settings put global overlay_display_devices none" -timeoutSeconds 5 | Out-Null
+    Invoke-AdbCommand -command "adb -s $serial shell wm size reset" -timeoutSeconds 5 | Out-Null
+    Invoke-AdbCommand -command "adb -s $serial shell wm density reset" -timeoutSeconds 5 | Out-Null
+
+    # Reset rotation settings
+    try {
+        $resetRotationResult = Invoke-AdbCommand -command "adb -s $serial shell settings put system user_rotation 0" -timeoutSeconds 5
+        if (-not $resetRotationResult.Success) {
+            Write-Warning "Failed to reset user_rotation: $($resetRotationResult.Stderr)"
+        } else {
+            Write-Host "  Reset user_rotation to 0"
+        }
+
+        $originalAutoRotation = if ($global:rotationStates.ContainsKey($serial)) { $global:rotationStates[$serial].accelerometer_rotation } else { 0 }
+        $restoreAutoResult = Invoke-AdbCommand -command "adb -s $serial shell settings put system accelerometer_rotation $originalAutoRotation" -timeoutSeconds 5
+        if (-not $restoreAutoResult.Success) {
+            Write-Warning "Failed to restore accelerometer_rotation: $($restoreAutoResult.Stderr)"
+        } else {
+            Write-Host "  Restored accelerometer_rotation to $originalAutoRotation"
+        }
+
+        # Clear stored states
+        if ($global:rotationStates.ContainsKey($serial)) {
+            $global:rotationStates.Remove($serial)
+            Write-Host "  Cleared stored rotation states for $serial"
+        }
+    } catch {
+        Write-Warning "Failed to reset rotation settings: $_"
+    }
+
+    Write-Host "Display and rotation settings reset complete."
 }
 
 try {
+    Register-ConsoleCtrlHandler
+    Write-Host "Console control handler registered."
+
     $listener.Start()
     Write-Host "Server running on http://localhost:$port/"
-    while ($listener.IsListening) {
+
+    while ($listener.IsListening -and $global:serverRunning) {
         $context = $listener.GetContext()
         $request = $context.Request
         $response = $context.Response
@@ -349,29 +405,37 @@ try {
         }
 
 		
-        elseif ($request.Url.LocalPath -eq "/connect-device") {
-            $response.ContentType = "application/json"
-            try {
-                $body = New-Object System.IO.StreamReader($request.InputStream)
-                $jsonPayload = $body.ReadToEnd()
-                $body.Close()
-                $requestData = ConvertFrom-Json $jsonPayload
-                $connectionMode = $requestData.mode
-                $ipAddress = $requestData.ip
-                Write-Host "Received /connect-device request (Mode: $connectionMode, IP: $ipAddress)"
-                $result = Connect-Device -mode $connectionMode -ip $ipAddress
-                $jsonResponse = @{ success = $true; message = $result.message } | ConvertTo-Json
-                Write-Host "Sending connect-device response: $($jsonResponse)"
-            } catch {
-                Write-Error "Error in /connect-device: $_"
-                $jsonResponse = @{ success = $false; message = $_.Exception.Message } | ConvertTo-Json
-                $response.StatusCode = 500
-            }
-            $buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonResponse)
-            $response.ContentLength64 = $buffer.Length
-            $response.OutputStream.Write($buffer, 0, $buffer.Length)
-            $response.Close()
-        }
+		elseif ($request.Url.LocalPath -eq "/connect-device") {
+			$response.ContentType = "application/json"
+			try {
+				$body = New-Object System.IO.StreamReader($request.InputStream)
+				$jsonPayload = $body.ReadToEnd()
+				$body.Close()
+				$requestData = ConvertFrom-Json $jsonPayload
+				$connectionMode = $requestData.mode
+				$ipAddress = $requestData.ip
+				Write-Host "Received /connect-device request (Mode: $connectionMode, IP: $ipAddress)"
+				$result = Connect-Device -mode $connectionMode -ip $ipAddress
+				$jsonResponse = @{
+					success = $true
+					message = $result.message
+					model = (Invoke-AdbCommand -command "adb -s $global:deviceSerial shell getprop ro.product.model" -timeoutSeconds 5).Stdout.Trim()
+					ip = if ($connectionMode -eq "wifi") { $ipAddress } else { (Get-DeviceIpAddress -serial $global:deviceSerial) }
+				} | ConvertTo-Json
+				Write-Host "Sending connect-device response: $($jsonResponse)"
+			} catch {
+				Write-Error "Error in /connect-device: $_"
+				$currentSerial = $global:deviceSerial
+				$global:deviceSerial = $null
+				$global:rotationStates.Remove($currentSerial)
+				$jsonResponse = @{ success = $false; message = $_.Exception.Message } | ConvertTo-Json
+				$response.StatusCode = 500
+			}
+			$buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonResponse)
+			$response.ContentLength64 = $buffer.Length
+			$response.OutputStream.Write($buffer, 0, $buffer.Length)
+			$response.Close()
+		}
 
         elseif ($request.Url.LocalPath -eq "/start-scrcpy") {
             $response.ContentType = "text/plain; charset=utf-8"
@@ -516,15 +580,19 @@ try {
                 $batContent = "@echo off`r`n"
                 $batContent += "$finalScrcpyCommand`r`n"
 
-                if ($resetNeeded) {
-                    Write-Host "Adding display reset commands to batch file."
-                    $batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`r`n"
-                    $batContent += "adb -s $global:deviceSerial shell wm size reset`r`n"
-                    $batContent += "adb -s $global:deviceSerial shell wm density reset`r`n"
-                }
+				if ($resetNeeded) {
+					Write-Host "Adding display and rotation reset commands to batch file."
+					$batContent += "adb -s $global:deviceSerial shell settings put global overlay_display_devices none`r`n"
+					$batContent += "adb -s $global:deviceSerial shell wm size reset`r`n"
+					$batContent += "adb -s $global:deviceSerial shell wm density reset`r`n"
+					$batContent += "adb -s $global:deviceSerial shell settings put system user_rotation 0`r`n"
+					$originalAutoRotation = if ($global:rotationStates.ContainsKey($global:deviceSerial)) { $global:rotationStates[$global:deviceSerial].accelerometer_rotation } else { 0 }
+					$batContent += "adb -s $global:deviceSerial shell settings put system accelerometer_rotation $originalAutoRotation`r`n"
+					$batContent += "echo Reset display and rotation settings complete.`r`n"
+				}
 
-                if (-not (Test-Path $scriptDir)) { New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null }
-                Set-Content -Path $scrcpyBatFilePath -Value $batContent -Encoding OEM -Force
+				if (-not (Test-Path $scriptDir)) { New-Item -ItemType Directory -Path $scriptDir -Force | Out-Null }
+				Set-Content -Path $scrcpyBatFilePath -Value $batContent -Encoding OEM -Force
                 Write-Host "Batch file created: $scrcpyBatFilePath"
 
                 Write-Host "Starting Scrcpy process..."
@@ -644,6 +712,137 @@ try {
 				}
 			}
 		}
+		elseif ($request.Url.LocalPath -eq "/rotate-screen") {
+			$response.ContentType = "application/json"
+			try {
+				Write-Host "Received /rotate-screen request"
+				if (-not $global:deviceSerial) {
+					throw "No device is currently selected for rotation."
+				}
+
+				# Initialize state for this device if not already stored
+				if (-not $global:rotationStates.ContainsKey($global:deviceSerial)) {
+					$global:rotationStates[$global:deviceSerial] = @{
+						user_rotation = $null
+						accelerometer_rotation = $null
+					}
+				}
+
+				# Get current rotation (user_rotation)
+				$rotationResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings get system user_rotation" -timeoutSeconds 5
+				if (-not $rotationResult.Success) {
+					throw "Failed to get user_rotation: $($rotationResult.Stderr)"
+				}
+				$currentRotation = if ($rotationResult.Stdout.Trim() -match '^\d+$') { [int]$rotationResult.Stdout.Trim() } else { 0 }
+				Write-Host "  Current user_rotation: $currentRotation"
+
+				# Get current auto-rotation setting (accelerometer_rotation)
+				$autoRotationResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings get system accelerometer_rotation" -timeoutSeconds 5
+				if (-not $autoRotationResult.Success) {
+					throw "Failed to get accelerometer_rotation: $($autoRotationResult.Stderr)"
+				}
+				$autoRotation = if ($autoRotationResult.Stdout.Trim() -match '^\d+$') { [int]$autoRotationResult.Stdout.Trim() } else { 0 }
+				Write-Host "  Current accelerometer_rotation: $autoRotation"
+
+				# Store initial states if not already stored
+				if ($null -eq $global:rotationStates[$global:deviceSerial].user_rotation) {
+					$global:rotationStates[$global:deviceSerial].user_rotation = $currentRotation
+					Write-Host "  Stored initial user_rotation: $currentRotation"
+				}
+				if ($null -eq $global:rotationStates[$global:deviceSerial].accelerometer_rotation) {
+					$global:rotationStates[$global:deviceSerial].accelerometer_rotation = $autoRotation
+					Write-Host "  Stored initial accelerometer_rotation: $autoRotation"
+				}
+
+				# Disable auto-rotation
+				$disableAutoResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings put system accelerometer_rotation 0" -timeoutSeconds 5
+				if (-not $disableAutoResult.Success) {
+					throw "Failed to disable auto-rotation: $($disableAutoResult.Stderr)"
+				}
+				Write-Host "  Auto-rotation disabled."
+
+				# Calculate next rotation (90 degrees clockwise)
+				$nextRotation = ($currentRotation + 1) % 4
+				Write-Host "  Setting next rotation: $nextRotation"
+
+				# Set new rotation
+				$setRotationResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings put system user_rotation $nextRotation" -timeoutSeconds 5
+				if (-not $setRotationResult.Success) {
+					throw "Failed to set user_rotation: $($setRotationResult.Stderr)"
+				}
+				Write-Host "  Screen rotated to user_rotation=$nextRotation"
+
+				$jsonResponse = @{
+					success = $true
+					message = "Screen rotated to $($nextRotation * 90) degrees."
+					new_rotation = $nextRotation
+				} | ConvertTo-Json
+			} catch {
+				Write-Error "Error in /rotate-screen: $_"
+				$jsonResponse = @{
+					success = $false
+					message = $_.Exception.Message
+				} | ConvertTo-Json
+				$response.StatusCode = 500
+			}
+			$buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonResponse)
+			$response.ContentLength64 = $buffer.Length
+			$response.OutputStream.Write($buffer, 0, $buffer.Length)
+			$response.Close()
+		}
+		elseif ($request.Url.LocalPath -eq "/reset-rotation") {
+			$response.ContentType = "application/json"
+			try {
+				Write-Host "Received /reset-rotation request"
+				if (-not $global:deviceSerial) {
+					throw "No device is currently selected for rotation reset."
+				}
+
+				# Check if we have stored states; use defaults if not
+				if (-not $global:rotationStates.ContainsKey($global:deviceSerial) -or $null -eq $global:rotationStates[$global:deviceSerial].user_rotation) {
+					Write-Host "No stored rotation state for $global:deviceSerial. Using defaults."
+					$global:rotationStates[$global:deviceSerial] = @{
+						user_rotation = 0
+						accelerometer_rotation = 0
+					}
+				}
+
+				# Reset user_rotation to 0
+				$resetRotationResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings put system user_rotation 0" -timeoutSeconds 5
+				if (-not $resetRotationResult.Success) {
+					throw "Failed to reset user_rotation: $($resetRotationResult.Stderr)"
+				}
+				Write-Host "  Reset user_rotation to 0"
+
+				# Restore original accelerometer_rotation
+				$originalAutoRotation = $global:rotationStates[$global:deviceSerial].accelerometer_rotation
+				$restoreAutoResult = Invoke-AdbCommand -command "adb -s $global:deviceSerial shell settings put system accelerometer_rotation $originalAutoRotation" -timeoutSeconds 5
+				if (-not $restoreAutoResult.Success) {
+					throw "Failed to restore accelerometer_rotation: $($restoreAutoResult.Stderr)"
+				}
+				Write-Host "  Restored accelerometer_rotation to $originalAutoRotation"
+
+				# Clear stored states
+				$global:rotationStates.Remove($global:deviceSerial)
+				Write-Host "  Cleared stored rotation states for $global:deviceSerial"
+
+				$jsonResponse = @{
+					success = $true
+					message = "Screen rotation and auto-rotation settings restored."
+				} | ConvertTo-Json
+			} catch {
+				Write-Error "Error in /reset-rotation: $_"
+				$jsonResponse = @{
+					success = $false
+					message = $_.Exception.Message
+				} | ConvertTo-Json
+				$response.StatusCode = 500
+			}
+			$buffer = [System.Text.Encoding]::UTF8.GetBytes($jsonResponse)
+			$response.ContentLength64 = $buffer.Length
+			$response.OutputStream.Write($buffer, 0, $buffer.Length)
+			$response.Close()
+		}
         else {
             $response.StatusCode = 404
             $buffer = [System.Text.Encoding]::UTF8.GetBytes("Not Found")
@@ -653,11 +852,24 @@ try {
         }
     }
 } catch {
-    Write-Host "Failed to start the server: $_"
+    Write-Host "Server error: $_"
 } finally {
+    Write-Host "Shutting down server..."
     if ($listener -and $listener.IsListening) {
         $listener.Stop()
         $listener.Close()
     }
+
+    if ($global:deviceSerial) {
+        Write-Host "Resetting display and rotation settings for device: $global:deviceSerial"
+        try {
+            Reset-Display -serial $global:deviceSerial
+        } catch {
+            Write-Warning "Failed to reset device settings: $_"
+        }
+        $global:rotationStates.Remove($global:deviceSerial)
+        Write-Host "Cleared rotation states for $global:deviceSerial"
+    }
+
     Write-Host "Server has stopped."
 }
