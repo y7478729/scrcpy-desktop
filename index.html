@@ -753,8 +753,80 @@
          #qrConnectButton .spinner + .button-text {
              display: none;
          }
+		.rotate-button-container {
+			display: flex;
+			flex-direction: column;
+			align-items: center;
+			margin-top: 12px;
+			gap: 8px; /* Space between label and button */
+		}
+		
+		.rotate-button-label {
+			font-size: 0.875rem;
+			color: var(--label-color);
+			font-weight: 400;
+			transition: color 0.3s ease;
+		}
 
+		.rotate-button-label.disabled {
+			opacity: 0.6;
+			color: var(--dim-text-color);
+		}
 
+		/* Rotate Button */
+		#rotateButton {
+			width: 40px;
+			height: 40px;
+			border-radius: 50%;
+			background: var(--secondary-accent);
+			color: #FFFFFF;
+			border: none;
+			padding: 0;
+			display: flex;
+			justify-content: center;
+			align-items: center;
+			box-shadow: 0 2px 8px rgba(244, 180, 0, 0.3);
+			cursor: pointer;
+			position: relative;
+			transition: all 0.3s ease;
+		}
+
+		#rotateButton:hover:not(.button-disabled) {
+			background: var(--secondary-accent-dark);
+			box-shadow: 0 4px 12px rgba(244, 180, 0, 0.4);
+			transform: scale(1.1);
+		}
+
+		#rotateButton.button-disabled {
+			opacity: 0.7;
+			cursor: not-allowed;
+			background: var(--input-bg);
+			box-shadow: none;
+			transform: none;
+		}
+
+		#rotateButton .rotate-icon {
+			width: 20px;
+			height: 20px;
+			stroke: #FFFFFF;
+			transition: stroke 0.3s ease;
+		}
+
+		#rotateButton.button-disabled .rotate-icon {
+			stroke: var(--dim-text-color);
+		}
+
+		#rotateButton .spinner {
+			position: absolute;
+			width: 16px;
+			height: 16px;
+			border: 2px solid rgba(255, 255, 255, 0.3);
+			border-top-color: #FFFFFF;
+		}
+
+		#rotateButton.button-disabled .spinner {
+			border-top-color: var(--dim-text-color);
+		}
     </style>
 </head>
 <body>
@@ -885,19 +957,29 @@
                 </div>
             </div>
 
-            <div class="card display-config">
-                <h3>Display Mode</h3>
-                <label style="margin-top: 0;">Choose display output:</label>
-                <small>Options are mutually exclusive.</small>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="useVirtualDisplay" checked>
-                    <label for="useVirtualDisplay">Virtual Display</label>
-                    <input type="checkbox" id="useNativeTaskbar">
-                    <label for="useNativeTaskbar">Native Taskbar (Android 12+)</label>
-                    <input type="checkbox" id="useSamsungDex">
-                    <label for="useSamsungDex">Samsung DeX</label>
-                </div>
-            </div>
+			<div class="card display-config">
+				<h3>Display Mode</h3>
+				<label style="margin-top: 0;">Choose display output:</label>
+				<small>Options are mutually exclusive.</small>
+				<div class="checkbox-group">
+					<input type="checkbox" id="useVirtualDisplay" checked>
+					<label for="useVirtualDisplay">Virtual Display</label>
+					<input type="checkbox" id="useNativeTaskbar">
+					<label for="useNativeTaskbar">Native Taskbar (Android 12+)</label>
+					<input type="checkbox" id="useSamsungDex">
+					<label for="useSamsungDex">Samsung DeX</label>
+				</div>
+				<div class="rotate-button-container">
+					<label for="rotateButton" class="rotate-button-label">Rotate Screen</label>
+					<button id="rotateButton" onclick="rotateScreen()" disabled class="button-disabled">
+						<svg class="rotate-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M23 4v6h-6"></path>
+							<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+						</svg>
+						<span id="rotateSpinner" class="spinner" style="display: none;"></span>
+					</button>
+				</div>
+			</div>
 
             <div class="card command-card">
                 <h3>Scrcpy Command</h3>
@@ -1105,6 +1187,7 @@
                 noControlCheckbox.dispatchEvent(new Event("change"));
             }
             toggleIpField();
+		    updateRotateButtonState();
         });
 
         var coll = document.getElementsByClassName("collapsible");
@@ -1555,6 +1638,67 @@
                 updateButton.classList.remove("button-disabled");
             }
         }
+		
+		const rotateButton = document.getElementById("rotateButton");
+		const rotateSpinner = document.getElementById("rotateSpinner");
+
+		function updateRotateButtonState() {
+			if (!rotateButton || !nativeTaskbarCheckbox) {
+				console.warn("Rotate button or Native Taskbar checkbox not found.");
+				return;
+			}
+
+			const nativeChecked = nativeTaskbarCheckbox.checked;
+			rotateButton.disabled = !nativeChecked;
+			rotateButton.classList.toggle("button-disabled", !nativeChecked);
+		}
+
+		async function rotateScreen() {
+			if (!rotateButton || !rotateSpinner) {
+				console.error("Rotate button or spinner not found.");
+				setStatus("Internal application error: Missing rotate button elements.", false);
+				return;
+			}
+
+			rotateButton.disabled = true;
+			rotateButton.classList.add("button-disabled");
+			rotateSpinner.style.display = "inline-block";
+			setStatus("Rotating screen...", true);
+
+			try {
+				const response = await fetch('/rotate-screen', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({})
+				});
+
+				const data = await response.json();
+
+				if (!response.ok || !data.success) {
+					throw new Error(data.message || `Screen rotation failed. HTTP status: ${response.status}`);
+				}
+
+				setStatus(data.message, true);
+
+			} catch (error) {
+				console.error("Screen rotation error:", error);
+				setStatus(`Error: ${error.message}`, false);
+			} finally {
+				rotateSpinner.style.display = "none";
+				updateRotateButtonState(); // Re-evaluate button state
+			}
+		}
+
+		// Update button state on checkbox changes
+		if (nativeTaskbarCheckbox) {
+			nativeTaskbarCheckbox.addEventListener("change", updateRotateButtonState);
+		}
+		if (virtualDisplayCheckbox) {
+			virtualDisplayCheckbox.addEventListener("change", updateRotateButtonState);
+		}
+		if (samsungDexCheckbox) {
+			samsungDexCheckbox.addEventListener("change", updateRotateButtonState);
+		}
     </script>
 </body>
 </html>

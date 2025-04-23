@@ -49,6 +49,7 @@ qr_connected_successfully = False
 qr_status_message = "Idle"
 qr_error = None
 
+rotation_states = {}
 
 @app.route('/')
 def serve_index():
@@ -762,7 +763,7 @@ def detect_device():
 
 @app.route('/connect-device', methods=['POST'])
 def connect_device():
-    global DEVICE_SERIAL
+    global DEVICE_SERIAL, rotation_states
     log.info("Received /connect-device request")
     if not DEVICE_SERIAL:
          log.warning("No device is currently selected.")
@@ -785,30 +786,43 @@ def connect_device():
         else:
             log.warning(f"Device {DEVICE_SERIAL} is no longer listed as active.")
             current_serial = DEVICE_SERIAL
+            rotation_states.pop(current_serial, None)  # Clear stored rotation states
             DEVICE_SERIAL = None
             return jsonify({'success': False, 'message': f'Device {current_serial} connection lost. Please re-detect.'})
 
     except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
         log.error(f"Device {DEVICE_SERIAL} check failed: {e}")
         current_serial = DEVICE_SERIAL
+        rotation_states.pop(current_serial, None)  # Clear stored rotation states
         DEVICE_SERIAL = None
         return jsonify({'success': False, 'message': f'Device connection lost or timed out: {e}. Please re-detect.'})
     except Exception as e:
          log.critical(f"An unexpected server error occurred in /connect-device: {e}", exc_info=True)
          return jsonify({'success': False, 'message': f'An unexpected server error occurred: {str(e)}'})
 
-
 def reset_display(serial):
-    print(f"Resetting display settings for {serial}...")
+    print(f"Resetting display and rotation settings for {serial}...")
     try:
+        # Reset display settings
         run_adb_command(['shell', 'settings', 'put', 'global', 'overlay_display_devices', 'none'], serial=serial, timeout=5)
         run_adb_command(['shell', 'wm', 'size', 'reset'], serial=serial, timeout=5)
         run_adb_command(['shell', 'wm', 'density', 'reset'], serial=serial, timeout=5)
-        
-        print(f"Display settings reset for {serial}.")
+
+        # Reset rotation settings
+        try:
+            response = requests.post('http://localhost:8000/reset-rotation')
+            response_data = response.json()
+            if response_data['success']:
+                print(f"Rotation settings reset for {serial}.")
+            else:
+                print(f"Warning: Failed to reset rotation settings: {response_data['message']}")
+        except requests.exceptions.RequestException as e:
+            print(f"Warning: Failed to call reset-rotation endpoint: {e}")
+
+        print(f"Display and rotation settings reset for {serial}.")
         time.sleep(1)
     except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
-        print(f"Warning: Failed to fully reset display settings for {serial}: {e}")
+        print(f"Warning: Failed to fully reset display/rotation settings for {serial}: {e}")
 
 def run_scrcpy_with_reset(cmd, serial, reset_needed):
     print(f"Starting Scrcpy process: {' '.join(cmd)}")
@@ -1130,6 +1144,124 @@ def update_app():
                 print(f"Error during cleanup: {cleanup_err}")
         return f"Error updating app: {str(e)}", 500
 
+@app.route('/rotate-screen', methods=['POST'])
+def rotate_screen():
+    global DEVICE_SERIAL, rotation_states
+    if not DEVICE_SERIAL:
+        log.warning("No device is currently selected for rotation.")
+        return jsonify({'success': False, 'message': 'No device is currently selected.'}), 400
+
+    try:
+        # Initialize state for this device if not already stored
+        if DEVICE_SERIAL not in rotation_states:
+            rotation_states[DEVICE_SERIAL] = {'user_rotation': None, 'accelerometer_rotation': None}
+
+        # Get current rotation (user_rotation)
+        current_rotation_result = run_adb_command(
+            ['shell', 'settings', 'get', 'system', 'user_rotation'],
+            serial=DEVICE_SERIAL,
+            timeout=5
+        )
+        current_rotation = int(current_rotation_result.stdout.strip()) if current_rotation_result.stdout.strip().isdigit() else 0
+
+        # Get current auto-rotation setting (accelerometer_rotation)
+        auto_rotation_result = run_adb_command(
+            ['shell', 'settings', 'get', 'system', 'accelerometer_rotation'],
+            serial=DEVICE_SERIAL,
+            timeout=5
+        )
+        auto_rotation = int(auto_rotation_result.stdout.strip()) if auto_rotation_result.stdout.strip().isdigit() else 0
+
+        # Store initial states if not already stored
+        if rotation_states[DEVICE_SERIAL]['user_rotation'] is None:
+            rotation_states[DEVICE_SERIAL]['user_rotation'] = current_rotation
+            log.info(f"Stored initial user_rotation for {DEVICE_SERIAL}: {current_rotation}")
+        if rotation_states[DEVICE_SERIAL]['accelerometer_rotation'] is None:
+            rotation_states[DEVICE_SERIAL]['accelerometer_rotation'] = auto_rotation
+            log.info(f"Stored initial accelerometer_rotation for {DEVICE_SERIAL}: {auto_rotation}")
+
+        # Disable auto-rotation
+        run_adb_command(
+            ['shell', 'settings', 'put', 'system', 'accelerometer_rotation', '0'],
+            serial=DEVICE_SERIAL,
+            check=True,
+            timeout=5
+        )
+        log.info(f"Disabled auto-rotation for {DEVICE_SERIAL}")
+
+        # Calculate next rotation (90 degrees clockwise)
+        next_rotation = (current_rotation + 1) % 4  # Cycles through 0, 1, 2, 3
+
+        # Set new rotation
+        run_adb_command(
+            ['shell', 'settings', 'put', 'system', 'user_rotation', str(next_rotation)],
+            serial=DEVICE_SERIAL,
+            check=True,
+            timeout=5
+        )
+        log.info(f"Rotated screen for {DEVICE_SERIAL} to user_rotation={next_rotation}")
+
+        return jsonify({
+            'success': True,
+            'message': f'Screen rotated to {next_rotation * 90} degrees.',
+            'new_rotation': next_rotation
+        })
+
+    except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
+        log.error(f"Failed to rotate screen for {DEVICE_SERIAL}: {e}")
+        return jsonify({'success': False, 'message': f'Failed to rotate screen: {str(e)}'}), 500
+    except Exception as e:
+        log.critical(f"Unexpected error during screen rotation: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Unexpected error: {str(e)}'}), 500
+
+@app.route('/reset-rotation', methods=['POST'])
+def reset_rotation():
+    global DEVICE_SERIAL, rotation_states
+    if not DEVICE_SERIAL:
+        log.warning("No device is currently selected for rotation reset.")
+        return jsonify({'success': False, 'message': 'No device is currently selected.'}), 400
+
+    try:
+        # Check if we have stored states for this device
+        if DEVICE_SERIAL not in rotation_states or rotation_states[DEVICE_SERIAL]['user_rotation'] is None:
+            log.info(f"No stored rotation state for {DEVICE_SERIAL}. Setting default values.")
+            rotation_states[DEVICE_SERIAL] = {'user_rotation': 0, 'accelerometer_rotation': 0}
+
+        # Reset user_rotation to 0
+        run_adb_command(
+            ['shell', 'settings', 'put', 'system', 'user_rotation', '0'],
+            serial=DEVICE_SERIAL,
+            check=True,
+            timeout=5
+        )
+        log.info(f"Reset user_rotation to 0 for {DEVICE_SERIAL}")
+
+        # Restore original accelerometer_rotation
+        original_auto_rotation = rotation_states[DEVICE_SERIAL]['accelerometer_rotation']
+        run_adb_command(
+            ['shell', 'settings', 'put', 'system', 'accelerometer_rotation', str(original_auto_rotation)],
+            serial=DEVICE_SERIAL,
+            check=True,
+            timeout=5
+        )
+        log.info(f"Restored accelerometer_rotation to {original_auto_rotation} for {DEVICE_SERIAL}")
+
+        # Clear stored states
+        rotation_states.pop(DEVICE_SERIAL, None)
+        log.info(f"Cleared stored rotation states for {DEVICE_SERIAL}")
+
+        return jsonify({
+            'success': True,
+            'message': 'Screen rotation and auto-rotation settings restored.'
+        })
+
+    except (subprocess.CalledProcessError, TimeoutError, FileNotFoundError) as e:
+        log.error(f"Failed to reset rotation for {DEVICE_SERIAL}: {e}")
+        return jsonify({'success': False, 'message': f'Failed to reset rotation: {str(e)}'}), 500
+    except Exception as e:
+        log.critical(f"Unexpected error during rotation reset: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Unexpected error: {str(e)}'}), 500
+        
 if __name__ == '__main__':
     print(f"Using ADB: {shutil.which(ADB_PATH) or 'Not found in PATH'}")
     print(f"Using Scrcpy: {shutil.which(SCRCPY_PATH) or 'Not found in PATH'}")
