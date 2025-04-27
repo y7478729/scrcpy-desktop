@@ -16,6 +16,8 @@ import string
 import logging
 from zeroconf import ServiceInfo, Zeroconf, ServiceBrowser, ServiceListener
 
+from typing import Union, Tuple  # Add this import at the top of server.py
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger('adb_qr_auto')
 
@@ -87,7 +89,7 @@ def generate_pairing_code(length=6):
     return ''.join(random.choice(string.digits) for _ in range(length))
 
 class AdbServiceListenerBase(ServiceListener):
-    def _extract_ip_port(self, zeroconf: Zeroconf, type: str, name: str) -> tuple[str | None, int | None]:
+    def _extract_ip_port(self, zeroconf: Zeroconf, type: str, name: str) -> Tuple[Union[str, None], Union[int, None]]:        
         log.debug(f"Querying details for service: {name}")
         info = zeroconf.get_service_info(type, name, timeout=1000)
 
@@ -1080,7 +1082,7 @@ def update_app():
         print("Download complete.")
 
         temp_update_dir = "temp_update_dir"
-        files_to_update = ["index.html", "server.py", "server.ps1"]
+        files_to_update = ["requirements.txt", "index.html", "server.py", "server.ps1"]
 
         if os.path.exists(temp_update_dir):
             print(f"Removing existing temp directory: {temp_update_dir}")

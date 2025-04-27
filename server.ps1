@@ -659,7 +659,7 @@ try {
 				$extractedPath = $extractedDir.FullName
 				Write-Host "Extracted directory: $extractedPath"
 
-				$filesToCopy = @("index.html", "server.py", "server.ps1")
+				$filesToCopy = @("requirements.txt", "index.html", "server.py", "server.ps1")
 				$missingFiles = @()
 				Write-Host "Copying updated files:"
 				foreach ($file in $filesToCopy) {
