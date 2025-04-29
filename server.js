@@ -30,14 +30,11 @@ const PACKET_HEADER_LENGTH = 12;
 const MESSAGE_TYPES = {
     DEVICE_NAME: 'deviceName',
     VIDEO_INFO: 'videoInfo',
+    VIDEO_PACKET_META: 'videoPacketMeta',
     AUDIO_INFO: 'audioInfo',
+    AUDIO_PACKET_META: 'audioPacketMeta',
     STATUS: 'status',
     ERROR: 'error'
-};
-
-const BINARY_TYPES = {
-    VIDEO: 0,
-    AUDIO: 1
 };
 
 const CODEC_IDS = {
@@ -57,7 +54,7 @@ function createWebSocketServer() {
         ws.on('message', async (data) => {
             try {
                 const message = JSON.parse(data);
-                console.log(`[WebSocket ${clientId}] Received message:`, message);
+                console.log(`[WebSocket ${clientId}] Received message:`, message.action);
                 if (message.action === 'start') await handleStart(clientId, ws, message);
                 else if (message.action === 'disconnect') await handleDisconnect(clientId);
                 else ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Unknown action: ${message.action}` }));
@@ -95,9 +92,9 @@ async function handleStart(clientId, ws, message) {
         if (!devices.length) throw new Error('No devices found via ADB');
         const deviceId = devices[0].id;
         const runOptions = { ...DEFAULT_OPTIONS };
-        runOptions.max_size = String(message.maxSize);
-        runOptions.max_fps = String(message.maxFps);
-        runOptions.video_bit_rate = String((message.bitrate));
+        runOptions.max_size = String(message.maxSize || 0);
+        runOptions.max_fps = String(message.maxFps || 0);
+        runOptions.video_bit_rate = String((message.bitrate || 8000000));
         runOptions.audio = String(message.enableAudio || false);
         runOptions.audio_codec = 'raw';
         runOptions.video = 'true';
@@ -110,21 +107,28 @@ async function handleStart(clientId, ws, message) {
         ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming started' }));
     } catch (err) {
         console.error(`[HandleStart] Error starting session for client ${clientId}:`, err.message);
-        ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: err.message }));
+        ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Failed to start: ${err.message}` }));
     }
 }
 
 async function handleDisconnect(clientId) {
     const client = wsClients.get(clientId);
-    if (!client || !client.session) return;
-    console.log(`[Disconnect] Cleaning up session for client ${clientId}, scid: ${client.session}`);
+    if (!client) return;
+
     const scidToClean = client.session;
+    console.log(`[Disconnect] Cleaning up session for client ${clientId}, scid: ${scidToClean}`);
+
     client.session = null;
     if (client.ws && client.ws.readyState === WebSocket.OPEN) {
          client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming stopped' }));
     }
     wsClients.delete(clientId);
-    await cleanupSession(scidToClean);
+
+    if (scidToClean) {
+        await cleanupSession(scidToClean);
+    } else {
+        console.log(`[Disconnect] No active session found for client ${clientId} to clean up.`);
+    }
 }
 
 async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
@@ -153,9 +157,10 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         const optionsArray = Object.entries(runOptions).map(([key, value]) => `${key}=${value}`);
         const args = [SCRCPY_VERSION, `scid=${scid}`, ...optionsArray];
         const command = `CLASSPATH=${SERVER_DEVICE_PATH} app_process / com.genymobile.scrcpy.Server ${args.join(' ')}`;
+        console.log(`[Setup ${scid}] Executing: adb shell "${command}"`);
 
         session.processStream = await device.shell(command);
-        session.processStream.on('data', (data) => console.log(`[Server ${scid}]`, data.toString().trim()));
+        session.processStream.on('data', (data) => console.log(`[Server ${scid} Output]`, data.toString().trim()));
         session.processStream.on('error', (err) => {
             console.error(`[Server ${scid}] Process error: ${err.message}`);
             cleanupSession(scid);
@@ -168,6 +173,7 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         session.tcpServer = createTcpServer(scid, clientId);
         session.tcpServer.listen(port, '127.0.0.1');
         sessions.set(scid, session);
+        console.log(`[Setup ${scid}] Session ready and TCP server listening on port ${port}`);
     } catch (err) {
         console.error(`[Setup ${scid}] Error during setup: ${err.message}`);
         await cleanupSession(scid);
@@ -197,12 +203,15 @@ async function cleanupSession(scid) {
         const killCmd = `ps -ef | grep scid=${scid} | grep -v grep | tr -s ' ' | cut -d ' ' -f2 | xargs -r kill -9`;
         const fullKillCmd = `adb -s ${session.deviceId} shell "${killCmd}"`;
         try {
+            console.log(`[Cleanup ${scid}] Attempting to kill process with command: ${fullKillCmd}`);
             await execPromise(fullKillCmd);
             console.log(`[Cleanup ${scid}] Sent kill command for scrcpy process.`);
         } catch (err) {
             console.warn(`[Cleanup ${scid}] Failed to kill scrcpy process:`, err.message);
         }
         session.processStream = null;
+    } else {
+         console.log(`[Cleanup ${scid}] No process stream or device ID found, skipping process kill.`);
     }
 
     if (session.tunnelActive && session.deviceId) {
@@ -214,24 +223,36 @@ async function cleanupSession(scid) {
             console.warn(`[Cleanup ${scid}] Failed to remove reverse tunnel:`, err.message);
         }
         session.tunnelActive = false;
+    } else {
+         console.log(`[Cleanup ${scid}] Tunnel not active or no device ID, skipping tunnel removal.`);
     }
 
     if (session.tcpServer) {
-        await new Promise((resolve, reject) => {
+        await new Promise((resolve) => {
             session.tcpServer.close((err) => {
                 if (err) {
                     console.warn(`[Cleanup ${scid}] Error closing TCP server:`, err.message);
-                    reject(err);
                 } else {
                     console.log(`[Cleanup ${scid}] Closed local TCP server.`);
-                    resolve();
                 }
+                resolve();
             });
         });
         session.tcpServer = null;
     }
 
+    session.videoPacketBuffer = [];
+
     console.log(`[Cleanup ${scid}] Cleanup finished.`);
+
+    const client = Array.from(wsClients.values()).find(c => c.session === scid);
+    if (client) {
+        console.log(`[Cleanup ${scid}] Found associated client ${Array.from(wsClients.keys()).find(k => wsClients.get(k) === client)}, resetting session.`);
+        client.session = null;
+        if (client.ws.readyState === WebSocket.OPEN) {
+             client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming stopped' }));
+        }
+    }
 }
 
 function createTcpServer(scid, clientId) {
@@ -255,19 +276,21 @@ function createTcpServer(scid, clientId) {
         socket.on('data', (data) => processData(socket, data, clientId));
         socket.on('end', () => {
             console.log(`[TCP Server ${scid}] Connection ended: ${remoteId} (Type: ${socket.type || 'Unknown'})`);
-            if (currentSession && socket === currentSession.videoSocket) currentSession.videoSocket = null;
-            if (currentSession && socket === currentSession.audioSocket) currentSession.audioSocket = null;
+            if (currentSession) {
+                if (socket === currentSession.videoSocket) currentSession.videoSocket = null;
+                if (socket === currentSession.audioSocket) currentSession.audioSocket = null;
+            }
         });
         socket.on('error', (err) => {
             console.error(`[TCP Server ${scid}] Socket error (${remoteId}, Type: ${socket.type || 'Unknown'}): ${err.message}`);
             socket.destroy();
-            if (currentSession && socket === currentSession.videoSocket) currentSession.videoSocket = null;
-            if (currentSession && socket === currentSession.audioSocket) currentSession.audioSocket = null;
         });
         socket.on('close', (hadError) => {
             console.log(`[TCP Server ${scid}] Connection closed: ${remoteId} (Type: ${socket.type || 'Unknown'}, HadError: ${hadError})`);
-            if (currentSession && socket === currentSession.videoSocket) currentSession.videoSocket = null;
-            if (currentSession && socket === currentSession.audioSocket) currentSession.audioSocket = null;
+             if (currentSession) {
+                if (socket === currentSession.videoSocket) currentSession.videoSocket = null;
+                if (socket === currentSession.audioSocket) currentSession.audioSocket = null;
+            }
         });
     });
     server.on('error', (err) => {
@@ -282,7 +305,7 @@ function processData(socket, data, clientId) {
     const client = wsClients.get(clientId);
     const session = sessions.get(socket.scid);
 
-    if (!session || !client || client.session !== socket.scid) {
+    if (!session || !client || client.session !== socket.scid || client.ws.readyState !== WebSocket.OPEN) {
         socket.buffer = Buffer.alloc(0);
         return;
     }
@@ -312,39 +335,47 @@ function processData(socket, data, clientId) {
                  const minMetaLength = Math.min(VIDEO_METADATA_LENGTH, AUDIO_METADATA_LENGTH);
                  if (socket.buffer.length >= minMetaLength) {
                      const codecId = socket.buffer.readUInt32BE(0);
+                     const isVideo = codecId === CODEC_IDS.H264;
+                     const isAudio = codecId === CODEC_IDS.RAW;
+                     const neededLength = isVideo ? VIDEO_METADATA_LENGTH : isAudio ? AUDIO_METADATA_LENGTH : 0;
 
-                     if (codecId === CODEC_IDS.H264 && !session.videoSocket && socket.buffer.length >= VIDEO_METADATA_LENGTH) {
+                     if (isVideo && !session.videoSocket && socket.buffer.length >= neededLength) {
                          socket.type = 'video';
                          session.videoSocket = socket;
                          const width = socket.buffer.readUInt32BE(4);
                          const height = socket.buffer.readUInt32BE(8);
+                         const codec_name = 'avc1.42001E';
                          console.log(`[${socket.remoteId} ${socket.scid}] Video Socket - Codec: H264, Resolution: ${width}x${height}`);
-                         client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.VIDEO_INFO, codecId: CODEC_IDS.H264, width, height }));
-                         socket.buffer = socket.buffer.subarray(VIDEO_METADATA_LENGTH);
+                         client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.VIDEO_INFO, codec: codec_name, width, height }));
+                         socket.buffer = socket.buffer.subarray(neededLength);
                          socket.state = 'STREAMING';
                          processedPacket = true;
-                     } else if (codecId === CODEC_IDS.RAW && !session.audioSocket && socket.buffer.length >= AUDIO_METADATA_LENGTH) {
+                     } else if (isAudio && !session.audioSocket && socket.buffer.length >= neededLength) {
                          socket.type = 'audio';
                          session.audioSocket = socket;
                          console.log(`[${socket.remoteId} ${socket.scid}] Audio Socket - Codec: RAW (0x${codecId.toString(16)})`);
                          client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.AUDIO_INFO, codecId: CODEC_IDS.RAW }));
-                         socket.buffer = socket.buffer.subarray(AUDIO_METADATA_LENGTH);
+                         socket.buffer = socket.buffer.subarray(neededLength);
                          socket.state = 'STREAMING';
                          processedPacket = true;
-                     } else if ((codecId === CODEC_IDS.H264 && session.videoSocket) || (codecId === CODEC_IDS.RAW && session.audioSocket)) {
-                         console.warn(`[${socket.remoteId} ${socket.scid}] Duplicate metadata received for ${codecId === CODEC_IDS.H264 ? 'video' : 'audio'}. Ignoring extra metadata.`);
-                         const lenToRemove = codecId === CODEC_IDS.H264 ? VIDEO_METADATA_LENGTH : AUDIO_METADATA_LENGTH;
-                         if (socket.buffer.length >= lenToRemove) {
-                            socket.buffer = socket.buffer.subarray(lenToRemove);
-                            processedPacket = true;
+                     } else if ((isVideo && session.videoSocket) || (isAudio && session.audioSocket)) {
+                         console.warn(`[${socket.remoteId} ${socket.scid}] Duplicate metadata received for ${isVideo ? 'video' : 'audio'}. Ignoring.`);
+                         if (socket.buffer.length >= neededLength) {
+                            socket.buffer = socket.buffer.subarray(neededLength);
                             socket.state = 'STREAMING';
+                            processedPacket = true;
                          } else {
                             break;
                          }
-                     } 
-						else {
-							break;
+                     } else if (!isVideo && !isAudio && socket.buffer.length >= 4) {
+                         console.warn(`[${socket.remoteId} ${socket.scid}] Unknown codec ID: 0x${codecId.toString(16)}`);
+                         socket.state = 'IGNORING';
+                         processedPacket = true;
+                     } else {
+                         break;
                      }
+                 } else {
+                     break;
                  }
                  break;
 
@@ -354,7 +385,7 @@ function processData(socket, data, clientId) {
                     const pts_flags = header.readBigUInt64BE(0);
                     const size = header.readUInt32BE(8);
 
-                    if (size > 2 * 1024 * 1024) {
+                    if (size > 5 * 1024 * 1024) {
                         console.error(`[${socket.remoteId} ${socket.scid} - ${socket.type}] Unreasonable packet size: ${size}. Closing connection.`);
                         socket.destroy();
                         return;
@@ -362,35 +393,71 @@ function processData(socket, data, clientId) {
 
                     if (socket.buffer.length >= PACKET_HEADER_LENGTH + size) {
                         const payload = socket.buffer.subarray(PACKET_HEADER_LENGTH, PACKET_HEADER_LENGTH + size);
+                        const actual_pts = pts_flags & ((1n << 62n) - 1n);
+                        const isConfig = Boolean(pts_flags & (1n << 63n));
 
                         if (payload.length > 0 && client.ws && client.ws.readyState === WebSocket.OPEN) {
-                            const typeBuffer = Buffer.alloc(1);
                             if (socket.type === 'video') {
-                                typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
-                                const isConfig = Boolean(pts_flags & (1n << 63n));
                                 const isKeyFrame = isIdrFrame(payload);
+                                const metadata = {
+                                    type: MESSAGE_TYPES.VIDEO_PACKET_META,
+                                    pts: Number(actual_pts),
+                                    isKeyFrame,
+                                    isConfig,
+                                    size: payload.length
+                                };
 
                                 if (!session.hasVideoConfig || !session.hasKeyFrame) {
-                                    session.videoPacketBuffer.push(payload);
+                                    session.videoPacketBuffer.push({ metadata, payload });
                                     if (isConfig) session.hasVideoConfig = true;
                                     if (isKeyFrame) session.hasKeyFrame = true;
+
                                     if (session.hasVideoConfig && session.hasKeyFrame) {
                                         console.log(`[${socket.remoteId} ${socket.scid}] Video ready, sending ${session.videoPacketBuffer.length} buffered packets`);
-                                        for (const bufferedPayload of session.videoPacketBuffer) {
-                                             //console.log(`[Server ${socket.scid}] Sending Buffered H.264 payload: ${bufferedPayload.length} bytes`);
-                                             client.ws.send(Buffer.concat([typeBuffer, bufferedPayload]), { binary: true });
+                                        for (const packet of session.videoPacketBuffer) {
+                                             client.ws.send(JSON.stringify(packet.metadata));
+                                             if (packet.payload.length > 0) {
+                                                client.ws.send(packet.payload, { binary: true });
+                                             }
                                         }
                                         session.videoPacketBuffer = [];
                                     }
                                 } else {
-                                    //console.log(`[Server ${socket.scid}] Sending H.264 payload: ${payload.length} bytes`);
-                                    client.ws.send(Buffer.concat([typeBuffer, payload]), { binary: true });
+                                    client.ws.send(JSON.stringify(metadata));
+                                    if (payload.length > 0) {
+                                        client.ws.send(payload, { binary: true });
+                                    }
                                 }
                             } else if (socket.type === 'audio') {
-                                //console.log(`[Server ${socket.scid}] Sending RAW Audio payload: ${payload.length} bytes`);
-                                typeBuffer.writeUInt8(BINARY_TYPES.AUDIO, 0);
-                                client.ws.send(Buffer.concat([typeBuffer, payload]), { binary: true });
+                                const metadata = {
+                                    type: MESSAGE_TYPES.AUDIO_PACKET_META,
+                                    pts: Number(actual_pts),
+                                    size: payload.length
+                                };
+                                client.ws.send(JSON.stringify(metadata));
+                                if (payload.length > 0) {
+                                    client.ws.send(payload, { binary: true });
+                                }
                             }
+                        } else if (payload.length === 0) {
+                             if (socket.type === 'video') {
+                                const isKeyFrame = false;
+                                const metadata = {
+                                    type: MESSAGE_TYPES.VIDEO_PACKET_META,
+                                    pts: Number(actual_pts),
+                                    isKeyFrame,
+                                    isConfig,
+                                    size: 0
+                                };
+                                client.ws.send(JSON.stringify(metadata));
+                             } else if (socket.type === 'audio') {
+                                const metadata = {
+                                    type: MESSAGE_TYPES.AUDIO_PACKET_META,
+                                    pts: Number(actual_pts),
+                                    size: 0
+                                };
+                                client.ws.send(JSON.stringify(metadata));
+                             }
                         }
 
                         socket.buffer = socket.buffer.subarray(PACKET_HEADER_LENGTH + size);
@@ -419,7 +486,34 @@ function isIdrFrame(payload) {
     if (payload.length < 5) return false;
     const offset = (payload[0] === 0 && payload[1] === 0 && payload[2] === 1) ? 3 :
                    (payload[0] === 0 && payload[1] === 0 && payload[2] === 0 && payload[3] === 1) ? 4 : -1;
-    return offset !== -1 && (payload[offset] & 0x1f) === 5;
+    if (offset === -1) return false;
+
+    let currentOffset = offset;
+    while (currentOffset < payload.length) {
+        const nalType = payload[currentOffset] & 0x1f;
+        if (nalType === 5) {
+             return true;
+        }
+
+        let nextNalOffset = -1;
+        for (let i = currentOffset + 1; i < payload.length - 3; i++) {
+             if (payload[i] === 0 && payload[i+1] === 0 && payload[i+2] === 1) {
+                 nextNalOffset = i + 3;
+                 break;
+             }
+             if (payload[i] === 0 && payload[i+1] === 0 && payload[i+2] === 0 && payload[i+3] === 1) {
+                 nextNalOffset = i + 4;
+                 break;
+             }
+        }
+
+        if (nextNalOffset === -1) {
+             break;
+        }
+        currentOffset = nextNalOffset;
+    }
+
+    return false;
 }
 
 async function gracefulShutdown(wss) {
@@ -457,7 +551,7 @@ async function start() {
     app.use(express.static(path.join(__dirname, 'public')));
     app.listen(8000, () => {
         const url = 'http://localhost:8000';
-		
+
         console.log(`HTTP server listening on port 8000`);
         console.log(`Visit http://127.0.0.1:8000 or ${url} in your browser to access the frontend.`);
     });
