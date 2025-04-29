@@ -1,0 +1,17 @@
+{
+  "name": "scrcpy-mse-streamer",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@devicefarmer/adbkit": "^3.3.8",
+    "express": "^5.1.0",
+    "ws": "^8.18.1"
+  }
+}
