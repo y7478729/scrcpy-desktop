@@ -1,12 +1,15 @@
 # Scrcpy Desktop
 
-[![](https://img.shields.io/travis/your_username/scrcpy-desktop.svg?style=flat-square)](https://travis-ci.org/your_username/scrcpy-desktop)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![](https://img.shields.io/travis/your_username/scrcpy-desktop.svg?style=flat-square)](https://travis-ci.org/your_username/scrcpy-desktop) <!-- Replace with your CI badge -->
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT) <!-- Choose appropriate license -->
 [![GitHub stars](https://img.shields.io/github/stars/serifpersia/scrcpy-desktop.svg?style=flat-square)](https://github.com/serifpersia/scrcpy-desktop/stargazers)
 
 **Scrcpy Desktop** is a user-friendly web application that streams your Android device's screen and audio directly to your browser. It utilizes the powerful `scrcpy` server for efficient screen and audio capture.
 
-## ? Prerequisites
+![Scrcpy Desktop Screenshot Placeholder](placeholder.png)
+*Replace this with an actual screenshot or GIF of your application!*
+
+## ✅ Prerequisites
 
 Before you begin, ensure you have the following installed and configured:
 
@@ -15,7 +18,7 @@ Before you begin, ensure you have the following installed and configured:
 *   **Android Device**:
 ---
 
-## ??? Installation
+## 🛠️ Installation
 
 Follow these steps to get Scrcpy Desktop running locally:
 
@@ -44,7 +47,7 @@ Follow these steps to get Scrcpy Desktop running locally:
     *   Enjoy your device's screen and audio in the browser!
 ---
 
-## ?? Configuration
+## ⚙️ Configuration
 
 Most streaming parameters can be configured directly through the web interface:
 
@@ -54,7 +57,7 @@ Most streaming parameters can be configured directly through the web interface:
 *   **Audio:** Toggle audio streaming on or off.
 ---
 
-## ?? Acknowledgements
+## 🙏 Acknowledgements
 
 *   [scrcpy](https://github.com/Genymobile/scrcpy) - For the core screen mirroring server.
 *   [Broadway H.264 Decoder](https://github.com/mbebenita/Broadway) - For in-browser video decoding.
