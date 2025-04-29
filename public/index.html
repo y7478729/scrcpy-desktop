@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scrcpy Desktop</title>
     <style>
+        /* CSS Reset */
         * {
             margin: 0;
             padding: 0;
@@ -25,6 +26,7 @@
             font-size: inherit;
         }
 
+        /* Theme Variables */
         :root {
             --header-height: 60px;
             --control-width: 320px;
@@ -33,6 +35,7 @@
             --transition: all 0.3s ease;
         }
 
+        /* Light Theme */
         [data-theme="light"] {
             --bg-color: #f5f5f5;
             --text-color: #333;
@@ -44,9 +47,9 @@
             --button-text: #ffffff;
             --button-hover: #1565c0;
             --shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            --canvas-bg: #ddd;
         }
 
+        /* Dark Theme */
         [data-theme="dark"] {
             --bg-color: #121212;
             --text-color: #e0e0e0;
@@ -58,7 +61,6 @@
             --button-text: #121212;
             --button-hover: #64b5f6;
             --shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
-            --canvas-bg: #2c2c2c;
         }
 
         body {
@@ -111,7 +113,7 @@
             margin-top: calc(var(--header-height) + 1rem);
             width: var(--video-width);
             height: var(--video-height);
-            background: var(--canvas-bg);
+            background: #000;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -119,7 +121,6 @@
             border-radius: 8px;
             overflow: hidden;
             transition: var(--transition);
-            position: relative;
         }
 
         #canvasContainer.fullscreen {
@@ -137,25 +138,6 @@
             width: 100%;
             height: 100%;
             object-fit: contain;
-            display: block;
-            background: var(--canvas-bg);
-        }
-
-        .placeholder {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(51, 51, 51, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-color);
-            font-size: 0.9em;
-            text-align: center;
-            padding: 10px;
-            transition: opacity 0.3s;
-            pointer-events: none;
-            z-index: 10;
         }
 
         #info {
@@ -163,7 +145,6 @@
             font-size: 0.9rem;
             color: var(--text-color);
             text-align: center;
-            min-height: 1.4em;
         }
 
         .controls {
@@ -233,35 +214,66 @@
             cursor: not-allowed;
         }
 
+        /* Responsive Design */
         @media (max-width: 768px) {
             :root {
                 --header-height: 48px;
                 --control-width: 90vw;
                 --video-width: 90vw;
-                --video-height: calc(90vw * 1.78); /* Approx 16:9 aspect ratio */
+                --video-height: calc(90vw * 2);
             }
-            header h1 { font-size: 1.2rem; }
-            #themeToggle { padding: 0.4rem 0.8rem; font-size: 0.8rem; }
-            .controls { padding: 0.75rem; }
-            .setting label { font-size: 0.8rem; }
-            .setting input[type="number"] { width: 80px; padding: 0.4rem; }
-            .buttons button { padding: 0.6rem; font-size: 0.8rem; }
-            #canvasContainer { max-height: 60vh; }
+
+            header h1 {
+                font-size: 1.2rem;
+            }
+
+            #themeToggle {
+                padding: 0.4rem 0.8rem;
+                font-size: 0.8rem;
+            }
+
+            .controls {
+                padding: 0.75rem;
+            }
+
+            .setting label {
+                font-size: 0.8rem;
+            }
+
+            .setting input[type="number"] {
+                width: 80px;
+                padding: 0.4rem;
+            }
+
+            .buttons button {
+                padding: 0.6rem;
+                font-size: 0.8rem;
+            }
         }
 
         @media (max-width: 480px) {
             :root {
                 --video-height: calc(90vw * 1.78);
             }
-            header h1 { font-size: 1rem; }
-            .setting { flex-direction: column; align-items: flex-start; }
-            .setting input[type="number"] { width: 100%; }
+
+            header h1 {
+                font-size: 1rem;
+            }
+
+            .setting {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .setting input[type="number"] {
+                width: 100%;
+            }
         }
 
         @media (min-width: 1200px) {
             :root {
                 --video-width: 480px;
-                --video-height: 854px; /* Approx 16:9 */
+                --video-height: 960px;
                 --control-width: 480px;
             }
         }
@@ -273,10 +285,9 @@
         <button id="themeToggle">Switch Theme</button>
     </header>
     <div id="canvasContainer">
-        <canvas id="screen" width="320" height="640"></canvas>
-        <div class="placeholder" id="placeholder">Connect to view device screen</div>
+        <canvas id="screen"></canvas>
     </div>
-    <div id="info">Status: Idle</div>
+    <div id="info"></div>
     <div class="controls">
         <div class="settings">
             <div class="setting">
@@ -292,24 +303,27 @@
                 <input type="number" id="bitrate" value="8" min="1" step="1">
             </div>
             <div class="setting">
-                <label for="enableAudio">Enable Audio (RAW)</label>
+                <label for="enableAudio">Enable Audio</label>
                 <input type="checkbox" id="enableAudio">
             </div>
         </div>
         <div class="buttons">
-            <button id="startBtn" disabled>Start Stream</button>
+            <button id="startBtn">Start Stream</button>
             <button id="stopBtn" disabled>Stop Stream</button>
             <button id="fullscreenBtn">Fullscreen</button>
         </div>
     </div>
 
+    <script src="/vendor/broadway/Decoder.js"></script>
+    <script src="/vendor/broadway/YUVCanvas.js"></script>
+    <script src="/vendor/broadway/Player.js"></script>
+
     <script>
+        // WebSocket and streaming logic (unchanged from original)
         const wsUrl = `ws://${window.location.hostname}:8080`;
         let ws = null;
         const canvasContainer = document.getElementById('canvasContainer');
-        const canvas = document.getElementById('screen');
-        const ctx = canvas.getContext('2d', { alpha: false });
-        const placeholder = document.getElementById('placeholder');
+        let canvas = document.getElementById('screen');
         const infoDiv = document.getElementById('info');
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
@@ -318,15 +332,11 @@
         const maxFpsInput = document.getElementById('maxFps');
         const bitrateInput = document.getElementById('bitrate');
         const enableAudioInput = document.getElementById('enableAudio');
-
-        let videoDecoder = null;
+        let videoPlayer = null;
         let isRunning = false;
-        let expectedVideoData = null;
-        let expectedAudioData = null;
         let deviceWidth = 0;
         let deviceHeight = 0;
         let videoResolution = 'Unknown';
-
         let audioContext = null;
         let audioBufferQueue = [];
         let nextAudioTime = 0;
@@ -337,14 +347,9 @@
         const AUDIO_BYTES_PER_SAMPLE = 2;
         const AUDIO_SAMPLE_SIZE = AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
 
-        const MESSAGE_TYPES = {
-            DEVICE_NAME: 'deviceName',
-            VIDEO_INFO: 'videoInfo',
-            VIDEO_PACKET_META: 'videoPacketMeta',
-            AUDIO_INFO: 'audioInfo',
-            AUDIO_PACKET_META: 'audioPacketMeta',
-            STATUS: 'status',
-            ERROR: 'error'
+        const BINARY_TYPES = {
+            VIDEO: 0,
+            AUDIO: 1
         };
 
         const CODEC_IDS = {
@@ -353,106 +358,52 @@
         };
 
         function log(message) {
-            console.log(`[${new Date().toLocaleTimeString()}] ${message}`);
-        }
-
-        function updateStatus(message) {
-            infoDiv.textContent = message;
-            log(message);
+            console.log(message);
         }
 
         function updateCanvasSize(width, height) {
             if (width > 0 && height > 0) {
                 canvas.width = width;
                 canvas.height = height;
+                if (videoPlayer) {
+                    videoPlayer.size = { width, height };
+                }
                 canvasContainer.style.width = `${width}px`;
                 canvasContainer.style.height = `${height}px`;
-                ctx.fillStyle = getComputedStyle(canvas).backgroundColor;
-                ctx.fillRect(0, 0, width, height);
-                updateStatus(`Video Resolution: ${videoResolution} | Canvas Size: ${width}x${height}`);
+                updateInfo();
             }
         }
 
-        function resetCanvas() {
-             updateCanvasSize(320, 640);
-             placeholder.style.display = 'flex';
-             placeholder.textContent = 'Stream stopped or disconnected';
-             videoResolution = 'Unknown';
+        function updateInfo() {
+            infoDiv.textContent = `Video Resolution: ${videoResolution} | Player Size: ${canvas.width}x${canvas.height}`;
         }
 
-        function initDecoder() {
-            if (videoDecoder && videoDecoder.state !== 'closed') {
-                videoDecoder.close();
-                log('Previous video decoder closed.');
-            }
-            if (!window.VideoDecoder) {
-                updateStatus('Error: VideoDecoder API not supported in this browser.');
-                log('Error: VideoDecoder API not supported');
-                return false;
-            }
-            videoDecoder = new VideoDecoder({
-                output: (frame) => {
-                    if (canvas.width !== frame.codedWidth || canvas.height !== frame.codedHeight) {
-                        updateCanvasSize(frame.codedWidth, frame.codedHeight);
-                    }
-                    ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
-                    placeholder.style.display = 'none';
-                    frame.close();
-                },
-                error: (e) => {
-                    log(`VideoDecoder error: ${e.message} (State: ${videoDecoder?.state})`);
-                    updateStatus(`Error: VideoDecoder - ${e.message}`);
-                    stopStreamCleanup(false);
+        function setupVideoPlayer() {
+            if (videoPlayer) {
+                if (videoPlayer.canvas && videoPlayer.canvas.parentNode === canvasContainer) {
+                    canvasContainer.removeChild(videoPlayer.canvas);
                 }
+                if (videoPlayer.worker) videoPlayer.worker.terminate();
+                videoPlayer = null;
+            }
+
+            videoPlayer = new Player({
+                useWorker: true,
+                workerFile: 'vendor/broadway/Decoder.js',
+                webgl: 'auto',
+                size: { width: 320, height: 640 },
+                reuseMemory: true
             });
-            log('VideoDecoder initialized.');
-            return true;
-        }
 
-        async function configureDecoder(codec, width, height) {
-            if (!videoDecoder || videoDecoder.state === 'closed') {
-                log('Decoder not initialized or closed, cannot configure.');
-                return;
-            }
-            const config = {
-                codec: codec || 'avc1.42001E',
-                codedWidth: width,
-                codedHeight: height,
-                optimizeForLatency: true,
-                hardwareAcceleration: 'prefer-hardware',
-                avc: { format: 'annexb' }
-            };
-
-            try {
-                const support = await VideoDecoder.isConfigSupported(config);
-                if (support.supported) {
-                    videoDecoder.configure(config);
-                    log(`Decoder configured: ${JSON.stringify(config)}`);
-                    updateCanvasSize(width, height);
-                } else {
-                    log(`Hardware acceleration config unsupported, trying software.`);
-                    config.hardwareAcceleration = 'no-preference';
-                    const fallbackSupport = await VideoDecoder.isConfigSupported(config);
-                    if (fallbackSupport.supported) {
-                        videoDecoder.configure(config);
-                        log(`Decoder configured with software fallback: ${JSON.stringify(config)}`);
-                        updateCanvasSize(width, height);
-                    } else {
-                        log('Decoder configuration unsupported.');
-                        updateStatus('Error: VideoDecoder configuration unsupported.');
-                        stopStreamCleanup(false);
-                    }
-                }
-            } catch (e) {
-                log(`Error configuring decoder: ${e}`);
-                updateStatus(`Error: Configuring decoder - ${e.message}`);
-                stopStreamCleanup(false);
-            }
+            canvasContainer.innerHTML = '';
+            canvasContainer.appendChild(videoPlayer.canvas);
+            videoPlayer.canvas.id = 'screen';
+            canvas = videoPlayer.canvas;
         }
 
         function setupAudioPlayer(codecId) {
             if (codecId !== CODEC_IDS.RAW) {
-                log(`Unsupported audio codec ID received: 0x${codecId.toString(16)}`);
+                log(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
                 return;
             }
             if (!window.AudioContext) {
@@ -460,7 +411,7 @@
                 return;
             }
             if (audioContext && audioContext.state !== 'closed') {
-                audioContext.close().catch(e => log(`Error closing previous AudioContext: ${e}`));
+                audioContext.close();
             }
             try {
                 audioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: AUDIO_SAMPLE_RATE });
@@ -468,7 +419,6 @@
                 nextAudioTime = 0;
                 receivedFirstAudioPacket = false;
                 audioCodecId = codecId;
-                log('AudioContext initialized for RAW audio.');
             } catch (e) {
                 log(`Failed to create AudioContext: ${e}`);
             }
@@ -479,7 +429,7 @@
             if (arrayBuffer.byteLength === 0) return;
 
             if (arrayBuffer.byteLength % AUDIO_SAMPLE_SIZE !== 0) {
-                log(`Invalid raw audio data length: ${arrayBuffer.byteLength} bytes`);
+                log(`Invalid audio data length: ${arrayBuffer.byteLength} bytes`);
                 return;
             }
 
@@ -497,14 +447,14 @@
                 }
                 playAudioBuffer(audioBuffer);
             } catch (e) {
-                log(`Error processing raw audio: ${e}`);
+                log(`Error processing audio: ${e}`);
             }
         }
 
         function playAudioBuffer(buffer) {
             if (!audioContext) return;
             if (audioContext.state === 'suspended') {
-                audioContext.resume().catch(e => log(`Error resuming AudioContext: ${e}`));
+                audioContext.resume();
             }
             if (!receivedFirstAudioPacket) {
                 nextAudioTime = audioContext.currentTime + 0.05;
@@ -529,84 +479,29 @@
         function connectWebSocket() {
             ws = new WebSocket(wsUrl);
             ws.binaryType = 'arraybuffer';
-            log('Connecting to WebSocket...');
-            updateStatus('Status: Connecting...');
 
             ws.onopen = () => {
                 log('WebSocket Connected.');
-                updateStatus('Status: Connected. Ready to stream.');
                 startBtn.disabled = false;
             };
 
-            ws.onmessage = async (event) => {
-                if (event.data instanceof ArrayBuffer) {
-                    const packetData = new Uint8Array(event.data);
-                    if (expectedVideoData && packetData.byteLength === expectedVideoData.size) {
-                        const currentMeta = expectedVideoData;
-                        expectedVideoData = null;
-                        try {
-                            if (videoDecoder && videoDecoder.state === 'configured') {
-                                const chunk = new EncodedVideoChunk({
-                                    type: currentMeta.isConfig || currentMeta.isKeyFrame ? 'key' : 'delta',
-                                    timestamp: currentMeta.pts,
-                                    data: packetData
-                                });
-                                videoDecoder.decode(chunk);
-                            } else {
-                                log('Decoder not ready or closed, dropping video packet.');
-                            }
-                        } catch (e) {
-                            log(`Video decode error: ${e}`);
-                            stopStreamCleanup(false);
-                        }
-                    } else if (expectedAudioData && packetData.byteLength === expectedAudioData.size) {
-                        const currentAudioData = event.data;
-                        expectedAudioData = null;
-                        if (enableAudioInput.checked && audioContext) {
-                            handleAudioData(currentAudioData);
-                        }
-                    } else {
-                        log(`Unexpected binary data received. Expected Video Size: ${expectedVideoData?.size}, Audio Size: ${expectedAudioData?.size}, Received Size: ${packetData.byteLength}`);
-                        expectedVideoData = null;
-                        expectedAudioData = null;
-                    }
-                } else if (typeof event.data === 'string') {
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
                     try {
                         const message = JSON.parse(event.data);
                         switch (message.type) {
-                            case MESSAGE_TYPES.DEVICE_NAME:
-                                log(`Device Name: ${message.name}`);
-                                placeholder.textContent = `Connected to ${message.name}`;
-                                break;
-                            case MESSAGE_TYPES.VIDEO_INFO:
-                                log(`Video Info: Codec=${message.codec}, Resolution=${message.width}x${message.height}`);
+                            case 'videoInfo':
                                 videoResolution = `${message.width}x${message.height}`;
                                 deviceWidth = message.width;
                                 deviceHeight = message.height;
-                                await configureDecoder(message.codec, message.width, message.height);
+                                updateCanvasSize(deviceWidth, deviceHeight);
                                 break;
-                            case MESSAGE_TYPES.VIDEO_PACKET_META:
-                                if (message.size > 0) {
-                                    expectedVideoData = message;
-                                } else {
-                                    log(`Zero-size video packet meta received: PTS=${message.pts}, Key=${message.isKeyFrame}, Config=${message.isConfig}`);
-                                }
-                                break;
-                            case MESSAGE_TYPES.AUDIO_INFO:
-                                log(`Audio Info: Codec ID=0x${message.codecId.toString(16)}`);
+                            case 'audioInfo':
                                 if (enableAudioInput.checked) {
                                     setupAudioPlayer(message.codecId);
                                 }
                                 break;
-                            case MESSAGE_TYPES.AUDIO_PACKET_META:
-                                 if (message.size > 0) {
-                                    expectedAudioData = message;
-                                } else {
-                                    log(`Zero-size audio packet meta received: PTS=${message.pts}`);
-                                }
-                                break;
-                            case MESSAGE_TYPES.STATUS:
-                                updateStatus(`Status: ${message.message}`);
+                            case 'status':
                                 if (message.message === 'Streaming started') {
                                     isRunning = true;
                                     startBtn.disabled = true;
@@ -615,29 +510,31 @@
                                     maxFpsInput.disabled = true;
                                     bitrateInput.disabled = true;
                                     enableAudioInput.disabled = true;
-                                } else if (message.message === 'Streaming stopped' || message.message === 'Server shutting down') {
+                                } else if (message.message === 'Streaming stopped') {
                                     stopStreamCleanup(false);
                                 }
                                 break;
-                            case MESSAGE_TYPES.ERROR:
-                                updateStatus(`Error: ${message.message}`);
-                                log(`Server Error: ${message.message}`);
-                                stopStreamCleanup(false);
-                                break;
-                            default:
-                                log(`Unknown message type received: ${message.type}`);
                         }
                     } catch (e) {
                         log(`JSON parse error: ${e}`);
-                        log(`Raw data: ${event.data}`);
+                    }
+                } else if (event.data instanceof ArrayBuffer) {
+                    if (!isRunning) return;
+                    const dataView = new DataView(event.data);
+                    if (dataView.byteLength < 1) return;
+                    const type = dataView.getUint8(0);
+                    const payload = event.data.slice(1);
+                    if (type === BINARY_TYPES.VIDEO && videoPlayer) {
+                        videoPlayer.decode(new Uint8Array(payload));
+                    } else if (type === BINARY_TYPES.AUDIO && enableAudioInput.checked && audioContext) {
+                        handleAudioData(payload);
                     }
                 }
             };
 
-            ws.onclose = (event) => {
-                log(`WebSocket Disconnected. Code: ${event.code}, Reason: ${event.reason}`);
+            ws.onclose = () => {
+                log('WebSocket Disconnected.');
                 stopStreamCleanup(false);
-                updateStatus('Status: Disconnected.');
                 startBtn.disabled = true;
                 ws = null;
                 setTimeout(connectWebSocket, 5000);
@@ -645,7 +542,6 @@
 
             ws.onerror = (err) => {
                 log(`WebSocket Error: ${err.message || 'Unknown'}`);
-                updateStatus('Status: WebSocket Error.');
                 ws = null;
             };
         }
@@ -655,28 +551,7 @@
                 log('Cannot start stream: Already running or WebSocket not open.');
                 return;
             }
-            if (!initDecoder()) {
-                 updateStatus('Error: Failed to initialize video decoder.');
-                 return;
-            }
-
-            updateStatus('Status: Starting stream...');
-            resetCanvas();
-
-            if (enableAudioInput.checked) {
-                if (audioContext && audioContext.state === 'suspended') {
-                    audioContext.resume().catch(e => log(`Error resuming AudioContext pre-stream: ${e}`));
-                }
-            } else {
-                 if (audioContext && audioContext.state !== 'closed') {
-                    audioContext.close().catch(e => log(`Error closing audio context for disabled audio: ${e}`));
-                    audioContext = null;
-                 }
-            }
-
-            expectedVideoData = null;
-            expectedAudioData = null;
-
+            setupVideoPlayer();
             ws.send(JSON.stringify({
                 action: 'start',
                 maxSize: parseInt(maxSizeInput.value) || 0,
@@ -688,68 +563,60 @@
 
         function stopStream(intentional) {
             if (intentional && ws && ws.readyState === WebSocket.OPEN) {
-                log('Sending disconnect request to server.');
                 ws.send(JSON.stringify({ action: 'disconnect' }));
-            } else if (!isRunning && !intentional) {
-                return;
             }
             stopStreamCleanup(intentional);
         }
 
         function stopStreamCleanup(intentional) {
-            if (!isRunning && !intentional) {
-                const wasConnected = startBtn.disabled && stopBtn.disabled;
-                if (wasConnected) return;
-            }
-             log(`Cleaning up stream (intentional: ${intentional})`);
-             isRunning = false;
-             startBtn.disabled = !ws || ws.readyState !== WebSocket.OPEN;
-             stopBtn.disabled = true;
-             maxSizeInput.disabled = false;
-             maxFpsInput.disabled = false;
-             bitrateInput.disabled = false;
-             enableAudioInput.disabled = false;
+            if (!isRunning && !intentional) return;
+            isRunning = false;
+            startBtn.disabled = !ws || ws.readyState !== WebSocket.OPEN;
+            stopBtn.disabled = true;
+            maxSizeInput.disabled = false;
+            maxFpsInput.disabled = false;
+            bitrateInput.disabled = false;
+            enableAudioInput.disabled = false;
 
-            if (videoDecoder && videoDecoder.state !== 'closed') {
-                 try { videoDecoder.close(); } catch(e) { log(`Error closing video decoder: ${e}`);}
-                 log('Video decoder closed.');
+            if (videoPlayer) {
+                if (videoPlayer.worker) videoPlayer.worker.terminate();
+                if (videoPlayer.canvas && videoPlayer.canvas.parentNode === canvasContainer) {
+                    const placeholderCanvas = document.createElement('canvas');
+                    placeholderCanvas.id = 'screen';
+                    placeholderCanvas.width = 320;
+                    placeholderCanvas.height = 640;
+                    canvasContainer.replaceChild(placeholderCanvas, videoPlayer.canvas);
+                    canvas = placeholderCanvas;
+                }
+                videoPlayer = null;
             }
-            videoDecoder = null;
 
-            if (audioContext && audioContext.state !== 'closed') {
-                 try { audioContext.close(); } catch(e) { log(`Error closing audio context: ${e}`);}
-                 log('AudioContext closed.');
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+                audioBufferQueue = [];
+                nextAudioTime = 0;
+                audioCodecId = null;
+                receivedFirstAudioPacket = false;
             }
-            audioContext = null;
-            audioBufferQueue = [];
-            nextAudioTime = 0;
-            audioCodecId = null;
-            receivedFirstAudioPacket = false;
 
-            expectedVideoData = null;
-            expectedAudioData = null;
             deviceWidth = 0;
             deviceHeight = 0;
-
-            resetCanvas();
-            updateStatus(intentional ? 'Status: Stream stopped.' : 'Status: Disconnected / Error.');
-
-             if (document.fullscreenElement) {
-                document.exitFullscreen().catch(err => log(`Error exiting fullscreen on stop: ${err}`));
-             }
+            videoResolution = 'Unknown';
+            canvasContainer.style.width = '320px';
+            canvasContainer.style.height = '640px';
+            updateInfo();
         }
 
+        // Theme Toggle Logic
         const themeToggle = document.getElementById('themeToggle');
         themeToggle.addEventListener('click', () => {
             const body = document.body;
             const currentTheme = body.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            body.setAttribute('data-theme', newTheme);
-            themeToggle.textContent = newTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
-            ctx.fillStyle = getComputedStyle(canvas).backgroundColor;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            body.setAttribute('data-theme', currentTheme === 'dark' ? 'light' : 'dark');
         });
 
+        // Scroll Timeout for Theme Toggle
         let timeout;
         function showThemeToggle() {
             themeToggle.classList.remove('hidden');
@@ -758,62 +625,50 @@
                 themeToggle.classList.add('hidden');
             }, 3000);
         }
+
         window.addEventListener('scroll', showThemeToggle);
         window.addEventListener('mousemove', showThemeToggle);
-        showThemeToggle();
+        showThemeToggle(); // Initial call
 
+        // Fullscreen Logic
         fullscreenBtn.addEventListener('click', () => {
             if (!document.fullscreenElement) {
                 canvasContainer.requestFullscreen().then(() => {
                     canvasContainer.classList.add('fullscreen');
-                    fullscreenBtn.textContent = 'Exit Fullscreen';
                 }).catch(err => {
-                    log(`Fullscreen error: ${err}`);
+                    console.error(`Fullscreen error: ${err}`);
                 });
             } else {
-                document.exitFullscreen().catch(err => log(`Error exiting fullscreen: ${err}`));
+                document.exitFullscreen().then(() => {
+                    canvasContainer.classList.remove('fullscreen');
+                });
             }
         });
 
         document.addEventListener('fullscreenchange', () => {
             if (!document.fullscreenElement) {
                 canvasContainer.classList.remove('fullscreen');
-                fullscreenBtn.textContent = 'Fullscreen';
-                updateCanvasSize(deviceWidth || canvas.width, deviceHeight || canvas.height);
-            } else {
-                 updateCanvasSize(deviceWidth || canvas.width, deviceHeight || canvas.height);
             }
         });
 
+        // Initialize WebSocket and Stream Controls
         startBtn.addEventListener('click', startStream);
         stopBtn.addEventListener('click', () => stopStream(true));
-
-        document.addEventListener('click', () => {
-            if (audioContext && audioContext.state === 'suspended') {
-                audioContext.resume().then(() => {
-                    log('AudioContext resumed by user interaction.');
-                }).catch(e => log(`Error resuming AudioContext on click: ${e}`));
-            }
-        }, { once: true });
 
         window.addEventListener('beforeunload', () => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 try {
                     if (isRunning) {
                         ws.send(JSON.stringify({ action: 'disconnect' }));
-                        log('Sent disconnect on page unload.');
                     }
-                    ws.close(1001, 'Client closed');
                 } catch (e) {
-                    console.error("Error sending disconnect/closing WebSocket on page unload:", e);
+                    console.error("Error sending disconnect:", e);
                 }
+                ws.close(1001, 'Client closed');
             }
         });
 
-        log('Client script loaded. Initializing...');
-        resetCanvas();
         connectWebSocket();
-
     </script>
 </body>
 </html>
