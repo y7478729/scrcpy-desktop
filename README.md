@@ -1,4 +1,4 @@
-# Scrcpy Desktop ??
+# Scrcpy Desktop
 
 [![](https://img.shields.io/travis/your_username/scrcpy-desktop.svg?style=flat-square)](https://travis-ci.org/your_username/scrcpy-desktop) <!-- Replace with your CI badge -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT) <!-- Choose appropriate license -->
