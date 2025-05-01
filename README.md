@@ -60,7 +60,7 @@ Most streaming parameters can be configured directly through the web interface:
 ## 🙏 Acknowledgements
 
 *   [scrcpy](https://github.com/Genymobile/scrcpy) - For the core screen mirroring server.
-*   [Broadway H.264 Decoder](https://github.com/mbebenita/Broadway) - For in-browser video decoding.
+*   [h264-converter](https://github.com/xevojapan/h264-converter) - For in-browser fmp4 muxing.
 ---
 
 ## License

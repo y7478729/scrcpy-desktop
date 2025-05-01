@@ -1,0 +1,343 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow-x: hidden;
+    line-height: 1.5;
+}
+
+button, input, label {
+    border: none;
+    outline: none;
+    font-size: inherit;
+}
+
+:root {
+    --header-height: 60px;
+    --control-width: 320px;
+    --video-max-base-width: 720px;
+    --transition: all 0.2s ease;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] {
+    --bg-color: #fafafa;
+    --text-color: #212121;
+    --header-bg: #ffffff;
+    --header-text: #1976d2;
+    --control-bg: #ffffff;
+    --input-bg: #eceff1;
+    --button-bg: #1976d2;
+    --button-text: #ffffff;
+    --button-hover: #1565c0;
+    --placeholder-bg: #e0e0e0;
+    --video-bg: #cccccc;
+}
+
+[data-theme="dark"] {
+    --bg-color: #181818;
+    --text-color: #e0e0e0;
+    --header-bg: #212121;
+    --header-text: #90caf9;
+    --control-bg: #212121;
+    --input-bg: #333333;
+    --button-bg: #90caf9;
+    --button-text: #121212;
+    --button-hover: #64b5f6;
+    --placeholder-bg: #333333;
+    --video-bg: #000000;
+}
+
+body {
+    background: var(--bg-color);
+    color: var(--text-color);
+    transition: background-color 0.2s ease, color 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    overscroll-behavior: none;
+    padding-bottom: 1rem;
+}
+
+header {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    height: var(--header-height);
+    background: var(--header-bg);
+    box-shadow: var(--shadow);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    transition: var(--transition);
+}
+
+header h1 {
+    font-size: 1.5rem;
+    color: var(--header-text);
+    font-weight: 500;
+}
+
+#themeToggle {
+    position: absolute;
+    right: 1rem;
+    background: var(--button-bg);
+    color: var(--button-text);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: var(--transition);
+    font-size: 0.9rem;
+}
+
+#themeToggle:hover {
+    background: var(--button-hover);
+}
+
+#themeToggle.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+#streamArea {
+    position: relative;
+    margin-top: 1rem;
+    margin-bottom: 1rem;
+    width: auto;
+    height: auto;
+    /* Apply max constraints here so placeholder is positioned relative to them */
+    max-width: min(var(--video-max-base-width), 90vw);
+    max-height: 75vh;
+    /* Set initial aspect ratio here to define the area */
+    aspect-ratio: 9 / 16;
+    display: flex; /* Needed for aspect-ratio to work correctly with children */
+    align-items: center;
+    justify-content: center;
+}
+
+#screen {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: var(--video-bg);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    transition: opacity 0.3s ease;
+    opacity: 0; /* Initially hidden until stream starts */
+    max-width: 100%; /* Ensure it doesn't overflow streamArea */
+    max-height: 100%;
+}
+
+#screen.visible {
+    opacity: 1;
+}
+
+#screen.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    z-index: 2000;
+    border-radius: 0;
+    background: #000; /* Ensure black background for letterboxing */
+    aspect-ratio: auto; /* Let screen size dictate */
+    box-shadow: none;
+    opacity: 1; /* Ensure visible in fullscreen */
+}
+
+#videoPlaceholder {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--placeholder-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-color);
+    font-size: 1rem;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+    z-index: 10;
+    pointer-events: none;
+    border-radius: 8px; /* Match video radius */
+    box-shadow: var(--shadow); /* Match video shadow */
+}
+
+#videoPlaceholder.hidden {
+    opacity: 0;
+}
+
+
+#info {
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    color: var(--text-color);
+    text-align: center;
+    min-height: 1.5em;
+}
+
+.controls {
+    width: 100%;
+    max-width: var(--control-width);
+    background: var(--control-bg);
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+
+.settings {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.setting {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.setting label {
+    flex: 1;
+    font-size: 0.9rem;
+    color: var(--text-color);
+}
+
+.setting input[type="number"],
+.setting input[type="checkbox"] {
+    background: var(--input-bg);
+    color: var(--text-color);
+    padding: 0.5rem;
+    border-radius: 4px;
+    width: 100px;
+    border: 1px solid transparent;
+    transition: var(--transition);
+}
+
+.setting input[type="checkbox"] {
+    width: auto;
+    height: auto;
+    padding: 0;
+}
+
+.buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.buttons button {
+    flex: 1 1 auto;
+    background: var(--button-bg);
+    color: var(--button-text);
+    padding: 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: var(--transition);
+    min-width: 100px;
+}
+
+.buttons button:hover:not(:disabled) {
+    background: var(--button-hover);
+    transform: translateY(-1px);
+}
+
+.buttons button:active:not(:disabled) {
+    transform: translateY(0);
+}
+
+.buttons button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#status {
+    margin-top: 1rem;
+    font-size: 0.9em;
+    color: var(--text-color);
+    opacity: 0.8;
+}
+
+
+@media (max-width: 768px) {
+    :root {
+        --header-height: 52px;
+        --control-width: 90vw;
+        --video-max-base-width: 90vw;
+    }
+
+    header h1 {
+        font-size: 1.3rem;
+    }
+
+     #streamArea {
+        max-height: 70vh;
+     }
+
+    #themeToggle {
+        padding: 0.4rem 0.8rem;
+        font-size: 0.8rem;
+    }
+
+    .controls {
+        padding: 0.75rem;
+    }
+
+    .setting label {
+        font-size: 0.85rem;
+    }
+
+    .setting input[type="number"] {
+        width: 80px;
+        padding: 0.4rem;
+    }
+
+    .buttons button {
+        padding: 0.6rem;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 480px) {
+    :root {
+        --header-height: 48px;
+    }
+     header h1 {
+        font-size: 1.2rem;
+    }
+    .setting {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+
+    .setting label {
+       font-size: 0.8rem;
+    }
+
+    .setting input[type="number"] {
+        width: 100%;
+    }
+
+    .buttons {
+        flex-direction: column;
+    }
+}
