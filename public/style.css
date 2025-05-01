@@ -12,6 +12,15 @@ html, body {
     line-height: 1.5;
 }
 
+#screen.fullscreen::-webkit-media-controls-panel {
+  display: none !important;
+  -webkit-appearance: none;
+}
+
+#screen.fullscreen::-moz-media-controls {
+    display: none !important;
+}
+
 button, input, label {
     border: none;
     outline: none;
