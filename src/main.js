@@ -127,7 +127,7 @@ const checkAndUpdateFPS = () => {
 
     if (calculatedFPS && calculatedFPS !== currentFPS) {
         log(`FPS mismatch detected. Current: ${currentFPS}, Calculated: ${calculatedFPS}. Reinitializing converter.`);
-        reinitializeConverter(calculatedFPS);
+        //reinitializeConverter(calculatedFPS);
     }
 };
 const reinitializeConverter = (newFPS) => {

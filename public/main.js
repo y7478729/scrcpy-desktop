@@ -1823,21 +1823,7 @@
     const currentFPS = parseInt(elements.maxFpsSelect.value);
     if (calculatedFPS && calculatedFPS !== currentFPS) {
       log(`FPS mismatch detected. Current: ${currentFPS}, Calculated: ${calculatedFPS}. Reinitializing converter.`);
-      reinitializeConverter(calculatedFPS);
     }
-  };
-  var reinitializeConverter = (newFPS) => {
-    log(`Reinitializing stream with new FPS: ${newFPS}`);
-    elements.maxFpsSelect.value = newFPS.toString();
-    stopStreaming(true);
-    setTimeout(() => {
-      if (state.isRunning || state.ws && state.ws.readyState === WebSocket.OPEN) {
-        console.warn("Stream still active after delay, aborting restart");
-        return;
-      }
-      log("Restarting stream with new FPS");
-      startStreaming();
-    }, 100);
   };
   var setupAudioPlayer = (codecId) => {
     if (codecId !== CODEC_IDS.RAW) {
