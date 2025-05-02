@@ -1729,7 +1729,7 @@
   var BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
   var CODEC_IDS = { H264: 1748121140, RAW: 7496055 };
   var NALU_TYPE_IDR = 5;
-  var FPS_CHECK_INTERVAL = 1e3;
+  var FPS_CHECK_INTERVAL = 1e4;
   var TARGET_FPS_VALUES = [30, 50, 60, 120];
   var CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
   var AMOTION_EVENT_ACTION_DOWN = 0;
@@ -1752,18 +1752,19 @@
     maxFpsSelect: document.getElementById("maxFps"),
     enableAudioInput: document.getElementById("enableAudio"),
     enableControlInput: document.getElementById("enableControl"),
-    // Added
     statusDiv: document.getElementById("status"),
     themeToggle: document.getElementById("themeToggle"),
     fullscreenBtn: document.getElementById("fullscreenBtn"),
     streamArea: document.getElementById("streamArea"),
     videoPlaceholder: document.getElementById("videoPlaceholder"),
     videoElement: document.getElementById("screen"),
-    infoDiv: document.getElementById("info")
+    videoBorder: document.getElementById("videoBorder"),
+    // <-- ADD THIS
+    flipOrientationBtn: document.getElementById("flipOrientationBtn")
+    // <-- ADD THIS
   };
   var state = {
     ws: null,
-    // Video/Audio state (from original)
     converter: null,
     isRunning: false,
     audioContext: null,
@@ -1786,10 +1787,8 @@
     videoStats: [],
     inputBytes: [],
     momentumQualityStats: null,
-    noDecodedFramesSince: -1,
+    noExceptionFramesSince: -1,
     frameTimestamps: [],
-    fpsCheckIntervalId: null,
-    // Control state (from new)
     controlEnabledAtStart: false,
     isMouseDown: false,
     currentMouseButtons: 0,
@@ -1797,10 +1796,47 @@
   };
   var log = (message) => {
     console.log(message);
-    elements.infoDiv.textContent = message;
   };
   var updateStatus = (message) => {
     elements.statusDiv.textContent = `Status: ${message}`;
+  };
+  var updateVideoBorder = () => {
+    const video = elements.videoElement;
+    const border = elements.videoBorder;
+    const container = elements.streamArea;
+    if (!state.isRunning || state.deviceWidth === 0 || state.deviceHeight === 0 || !video.classList.contains("visible")) {
+      border.style.display = "none";
+      return;
+    }
+    const videoWidth = state.deviceWidth;
+    const videoHeight = state.deviceHeight;
+    const elementWidth = video.clientWidth;
+    const elementHeight = video.clientHeight;
+    if (elementWidth === 0 || elementHeight === 0) {
+      border.style.display = "none";
+      return;
+    }
+    const videoAspectRatio = videoWidth / videoHeight;
+    const elementAspectRatio = elementWidth / elementHeight;
+    let renderedVideoWidth, renderedVideoHeight;
+    let offsetX = 0, offsetY = 0;
+    if (elementAspectRatio > videoAspectRatio) {
+      renderedVideoHeight = elementHeight;
+      renderedVideoWidth = elementHeight * videoAspectRatio;
+      offsetX = (elementWidth - renderedVideoWidth) / 2;
+    } else {
+      renderedVideoWidth = elementWidth;
+      renderedVideoHeight = elementWidth / videoAspectRatio;
+      offsetY = (elementHeight - renderedVideoHeight) / 2;
+    }
+    const borderLeft = video.offsetLeft + offsetX;
+    const borderTop = video.offsetTop + offsetY;
+    border.style.left = `${borderLeft}px`;
+    border.style.top = `${borderTop}px`;
+    const borderWidth = 3;
+    border.style.width = `${renderedVideoWidth}px`;
+    border.style.height = `${renderedVideoHeight}px`;
+    border.style.display = "block";
   };
   var isIFrame = (frameData) => {
     if (!frameData || frameData.length < 1) return false;
@@ -1822,8 +1858,21 @@
     const calculatedFPS = calculateAverageFPS();
     const currentFPS = parseInt(elements.maxFpsSelect.value);
     if (calculatedFPS && calculatedFPS !== currentFPS) {
-      log(`FPS mismatch detected. Current: ${currentFPS}, Calculated: ${calculatedFPS}. Reinitializing converter.`);
+      reinitializeConverter(calculatedFPS);
     }
+  };
+  var reinitializeConverter = (newFPS) => {
+    log(`Reinitializing stream with new FPS: ${newFPS}`);
+    elements.maxFpsSelect.value = newFPS.toString();
+    stopStreaming(true);
+    setTimeout(() => {
+      if (state.isRunning || state.ws && state.ws.readyState === WebSocket.OPEN) {
+        console.warn("Stream still active after delay, aborting restart");
+        return;
+      }
+      log("Restarting stream with new FPS");
+      startStreaming();
+    }, 2e3);
   };
   var setupAudioPlayer = (codecId) => {
     if (codecId !== CODEC_IDS.RAW) {
@@ -2182,6 +2231,8 @@
     if (coords) {
       state.lastMousePosition = coords;
       sendMouseEvent(AMOTION_EVENT_ACTION_DOWN, state.currentMouseButtons, coords.x, coords.y);
+    } else {
+      console.warn(`Mouse Down - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
     }
   };
   var handleMouseUp = (event) => {
@@ -2221,6 +2272,8 @@
     if (coords) {
       state.lastMousePosition = coords;
       sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, coords.x, coords.y);
+    } else {
+      console.warn(`Mouse Move - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
     }
   };
   var handleMouseLeave = (event) => {
@@ -2247,12 +2300,10 @@
     state.controlEnabledAtStart = elements.enableControlInput.checked;
     Object.assign(state, {
       converter: null,
-      // Ensure these are reset
       audioContext: null,
       sourceBufferInternal: null,
       checkStateIntervalId: null,
       fpsCheckIntervalId: null,
-      // Original reset vars
       currentTimeNotChangedSince: -1,
       bigBufferSince: -1,
       aheadOfBufferSince: -1,
@@ -2268,7 +2319,6 @@
       momentumQualityStats: null,
       noDecodedFramesSince: -1,
       frameTimestamps: [],
-      // Control reset vars (added)
       isMouseDown: false,
       currentMouseButtons: 0,
       lastMousePosition: { x: 0, y: 0 }
@@ -2289,7 +2339,6 @@
         bitrate: (parseInt(elements.bitrateSelect.value) || 8) * 1e6,
         enableAudio: elements.enableAudioInput.checked,
         enableControl: state.controlEnabledAtStart
-        // Added
       }));
       state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL);
     };
@@ -2325,6 +2374,7 @@
                 elements.bitrateSelect.disabled = true;
                 elements.enableAudioInput.disabled = true;
                 elements.enableControlInput.disabled = true;
+                elements.flipOrientationBtn.disabled = false;
                 elements.videoElement.classList.toggle("control-enabled", state.controlEnabledAtStart);
                 if (!state.checkStateIntervalId) {
                   state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
@@ -2337,14 +2387,17 @@
               state.videoResolution = `${message.width}x${message.height}`;
               state.deviceWidth = message.width;
               state.deviceHeight = message.height;
-              log(`Video dimensions: ${state.videoResolution}`);
+              log(`Video dimensions updated: ${state.videoResolution}`);
               elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ? `${state.deviceWidth} / ${state.deviceHeight}` : "9 / 16";
               elements.videoPlaceholder.classList.add("hidden");
               elements.videoElement.classList.add("visible");
               if (state.converter) {
                 requestAnimationFrame(() => {
                   elements.videoElement.play().catch((e) => console.warn("Autoplay prevented:", e));
+                  setTimeout(updateVideoBorder, 50);
                 });
+              } else {
+                setTimeout(updateVideoBorder, 50);
               }
               break;
             case "audioInfo":
@@ -2353,7 +2406,6 @@
                 setupAudioPlayer(message.codecId);
               }
               break;
-            // Added cases from new version
             case "deviceName":
               log(`Device name: ${message.name}`);
               break;
@@ -2450,7 +2502,6 @@
     } catch (e) {
     }
     Object.assign(state, {
-      // Original reset vars
       deviceWidth: 0,
       deviceHeight: 0,
       videoResolution: "Unknown",
@@ -2466,7 +2517,6 @@
       momentumQualityStats: null,
       noDecodedFramesSince: -1,
       frameTimestamps: [],
-      // Control reset vars (added)
       controlEnabledAtStart: false,
       isMouseDown: false,
       currentMouseButtons: 0,
@@ -2479,6 +2529,7 @@
       document.exitFullscreen().catch((e) => console.error("Error exiting fullscreen:", e));
     }
     elements.videoElement.classList.remove("fullscreen");
+    elements.videoBorder.style.display = "none";
     log("Stream stopped.");
   };
   elements.themeToggle.addEventListener("click", () => {
@@ -2534,6 +2585,31 @@
       e.preventDefault();
     }
   });
+  elements.flipOrientationBtn.addEventListener("click", () => {
+    if (!state.isRunning) {
+      log("Cannot flip orientation: Stream not running.");
+      return;
+    }
+    if (state.deviceWidth > 0 && state.deviceHeight > 0) {
+      log(`Flipping orientation from ${state.deviceWidth}x${state.deviceHeight}`);
+      const tempWidth = state.deviceWidth;
+      state.deviceWidth = state.deviceHeight;
+      state.deviceHeight = tempWidth;
+      state.videoResolution = `${state.deviceWidth}x${state.deviceHeight}`;
+      log(`New orientation state: ${state.deviceWidth}x${state.deviceHeight}`);
+      elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ? `${state.deviceWidth} / ${state.deviceHeight}` : "9 / 16";
+      requestAnimationFrame(() => {
+        updateVideoBorder();
+      });
+    } else {
+      log("Cannot flip orientation: Dimensions not set.");
+    }
+  });
+  elements.flipOrientationBtn.disabled = true;
+  var resizeObserver = new ResizeObserver(() => {
+    updateVideoBorder();
+  });
+  resizeObserver.observe(elements.videoElement);
   elements.stopButton.disabled = true;
   updateStatus("Idle");
   log("Page loaded. Ready.");

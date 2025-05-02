@@ -130,7 +130,18 @@ header h1 {
     justify-content: center;
 }
 
+#videoBorder {
+    position: absolute;
+    pointer-events: none;
+    display: none;
+    z-index: 5;
+    transition: top 0.1s linear, left 0.1s linear, width 0.1s linear, height 0.1s linear;
+    box-sizing: border-box;
+}
+
 #screen {
+    position: relative;
+    z-index: 1;
     display: block;
     width: 100%;
     height: 100%;
@@ -144,6 +155,7 @@ header h1 {
     max-height: 100%;
     cursor: default; /* Default cursor */
 }
+
 
 #screen.visible {
     opacity: 1;

@@ -3,7 +3,7 @@ import { setLogger } from 'h264-converter';
 
 setLogger(() => {}, console.error);
 
-// Constants (Video/Audio/FPS - from original)
+// Constants (Video/Audio/FPS)
 const CHECK_STATE_INTERVAL_MS = 250;
 const MAX_SEEK_WAIT_MS = 1500;
 const MAX_TIME_TO_RECOVER = 200;
@@ -15,10 +15,10 @@ const AUDIO_SAMPLE_SIZE = AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
 const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
 const CODEC_IDS = { H264: 0x68323634, RAW: 0x00726177 };
 const NALU_TYPE_IDR = 5;
-const FPS_CHECK_INTERVAL = 1000;
+const FPS_CHECK_INTERVAL = 10000;
 const TARGET_FPS_VALUES = [30, 50, 60, 120];
 
-// Constants (Control - from new)
+// Constants (Control)
 const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
 const AMOTION_EVENT_ACTION_DOWN = 0;
 const AMOTION_EVENT_ACTION_UP = 1;
@@ -28,14 +28,14 @@ const AMOTION_EVENT_BUTTON_SECONDARY = 2;
 const AMOTION_EVENT_BUTTON_TERTIARY = 4;
 const POINTER_ID_MOUSE = -1n; // BigInt for 64-bit value
 
-// Browser-specific settings (from original)
+// Browser-specific settings
 const IS_SAFARI = !!window.safari;
 const IS_CHROME = navigator.userAgent.includes('Chrome');
 const IS_MAC = navigator.platform.startsWith('Mac');
 const MAX_BUFFER = IS_SAFARI ? 2 : IS_CHROME && IS_MAC ? 0.9 : 0.2;
 const MAX_AHEAD = -0.2;
 
-// DOM Elements (merged)
+// DOM Elements
 const elements = {
     startButton: document.getElementById('startBtn'),
     stopButton: document.getElementById('stopBtn'),
@@ -43,20 +43,20 @@ const elements = {
     maxSizeSelect: document.getElementById('maxSize'),
     maxFpsSelect: document.getElementById('maxFps'),
     enableAudioInput: document.getElementById('enableAudio'),
-    enableControlInput: document.getElementById('enableControl'), // Added
+    enableControlInput: document.getElementById('enableControl'),
     statusDiv: document.getElementById('status'),
     themeToggle: document.getElementById('themeToggle'),
     fullscreenBtn: document.getElementById('fullscreenBtn'),
     streamArea: document.getElementById('streamArea'),
     videoPlaceholder: document.getElementById('videoPlaceholder'),
     videoElement: document.getElementById('screen'),
-    infoDiv: document.getElementById('info')
+    videoBorder: document.getElementById('videoBorder'), // <-- ADD THIS
+    flipOrientationBtn: document.getElementById('flipOrientationBtn'), // <-- ADD THIS
 };
 
-// State (merged)
+// State
 let state = {
     ws: null,
-    // Video/Audio state (from original)
     converter: null,
     isRunning: false,
     audioContext: null,
@@ -79,25 +79,80 @@ let state = {
     videoStats: [],
     inputBytes: [],
     momentumQualityStats: null,
-    noDecodedFramesSince: -1,
+    noExceptionFramesSince: -1,
     frameTimestamps: [],
-    fpsCheckIntervalId: null,
-    // Control state (from new)
     controlEnabledAtStart: false,
     isMouseDown: false,
     currentMouseButtons: 0,
     lastMousePosition: { x: 0, y: 0 }
 };
 
-// Utility Functions (from original)
+// Utility Functions
 const log = (message) => {
     console.log(message);
-    elements.infoDiv.textContent = message;
 };
 
 const updateStatus = (message) => {
     elements.statusDiv.textContent = `Status: ${message}`;
 };
+
+const updateVideoBorder = () => {
+    const video = elements.videoElement;
+    const border = elements.videoBorder;
+    const container = elements.streamArea;
+
+    if (!state.isRunning || state.deviceWidth === 0 || state.deviceHeight === 0 || !video.classList.contains('visible')) {
+        border.style.display = 'none';
+        return;
+    }
+
+    const videoWidth = state.deviceWidth;
+    const videoHeight = state.deviceHeight;
+    const elementWidth = video.clientWidth;
+    const elementHeight = video.clientHeight;
+
+    if (elementWidth === 0 || elementHeight === 0) {
+        border.style.display = 'none';
+        return;
+    }
+
+    const videoAspectRatio = videoWidth / videoHeight;
+    const elementAspectRatio = elementWidth / elementHeight;
+
+    let renderedVideoWidth, renderedVideoHeight;
+    let offsetX = 0, offsetY = 0;
+
+    // Calculate the actual rendered video dimensions based on object-fit: contain
+    if (elementAspectRatio > videoAspectRatio) {
+        // Element is wider than video (letterbox top/bottom or pillarbox if width was constrained)
+        // In 'contain' mode, height determines size
+        renderedVideoHeight = elementHeight;
+        renderedVideoWidth = elementHeight * videoAspectRatio;
+        offsetX = (elementWidth - renderedVideoWidth) / 2;
+    } else {
+        // Element is taller than video (pillarbox left/right or letterbox if height was constrained)
+        // In 'contain' mode, width determines size
+        renderedVideoWidth = elementWidth;
+        renderedVideoHeight = elementWidth / videoAspectRatio;
+        offsetY = (elementHeight - renderedVideoHeight) / 2;
+    }
+
+    // Calculate position relative to the container (#streamArea)
+    // video.offsetLeft/Top gives position of video element *within* its offset parent (should be streamArea)
+    const borderLeft = video.offsetLeft + offsetX;
+    const borderTop = video.offsetTop + offsetY;
+
+    // Apply styles
+    border.style.left = `${borderLeft}px`;
+    border.style.top = `${borderTop}px`;
+    // Subtract border width * 2 from dimensions to keep border *around* the content area
+    // Adjust '3' if you change the border width in CSS
+    const borderWidth = 3;
+    border.style.width = `${renderedVideoWidth}px`;
+    border.style.height = `${renderedVideoHeight}px`;
+    border.style.display = 'block';
+};
+
 
 const isIFrame = (frameData) => {
     if (!frameData || frameData.length < 1) return false;
@@ -106,7 +161,7 @@ const isIFrame = (frameData) => {
     return frameData.length > offset && (frameData[offset] & 0x1F) === NALU_TYPE_IDR;
 };
 
-// FPS Calculation (from original)
+// FPS Calculation
 const calculateAverageFPS = () => {
     const now = Date.now();
     state.frameTimestamps = state.frameTimestamps.filter(ts => now - ts < FPS_CHECK_INTERVAL);
@@ -126,10 +181,10 @@ const checkAndUpdateFPS = () => {
     const currentFPS = parseInt(elements.maxFpsSelect.value);
 
     if (calculatedFPS && calculatedFPS !== currentFPS) {
-        log(`FPS mismatch detected. Current: ${currentFPS}, Calculated: ${calculatedFPS}. Reinitializing converter.`);
-        //reinitializeConverter(calculatedFPS);
+        reinitializeConverter(calculatedFPS);
     }
 };
+
 const reinitializeConverter = (newFPS) => {
     log(`Reinitializing stream with new FPS: ${newFPS}`);
     elements.maxFpsSelect.value = newFPS.toString();
@@ -142,10 +197,10 @@ const reinitializeConverter = (newFPS) => {
         }
         log('Restarting stream with new FPS');
         startStreaming();
-    }, 100);
+    }, 2000);
 };
 
-// Audio Handling (from original)
+// Audio Handling
 const setupAudioPlayer = (codecId) => {
     if (codecId !== CODEC_IDS.RAW) {
         log(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
@@ -236,7 +291,7 @@ const playAudioBuffer = (buffer) => {
     }
 };
 
-// Video Handling (from original)
+// Video Handling
 const initVideoConverter = () => {
     state.converter = new VideoConverter(elements.videoElement, parseInt(elements.maxFpsSelect.value), 1);
     state.sourceBufferInternal = state.converter?.sourceBuffer || null;
@@ -315,7 +370,7 @@ const checkForIFrameAndCleanBuffer = (frameData) => {
     }
 };
 
-// Video Playback Quality (from original)
+// Video Playback Quality
 const getVideoPlaybackQuality = () => {
     const video = elements.videoElement;
     if (!video) return null;
@@ -452,7 +507,7 @@ const checkForBadState = () => {
     }
 };
 
-// --- Coordinate Scaling Function (from new) ---
+// Coordinate Scaling Function
 const getScaledCoordinates = (event) => {
     const video = elements.videoElement;
     const screenInfo = {
@@ -499,9 +554,8 @@ const getScaledCoordinates = (event) => {
 
     return { x: deviceX, y: deviceY };
 };
-// --- End Coordinate Scaling Function ---
 
-// --- Control Message Sending (from new) ---
+// Control Message Sending
 const sendControlMessage = (buffer) => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN && state.controlEnabledAtStart) {
         try {
@@ -531,9 +585,8 @@ const sendMouseEvent = (action, buttons, x, y) => {
 
     sendControlMessage(buffer);
 };
-// --- End Control Message Sending ---
 
-// --- Mouse Event Handlers (from new) ---
+// Mouse Event Handlers
 const handleMouseDown = (event) => {
     if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
     event.preventDefault();
@@ -550,8 +603,11 @@ const handleMouseDown = (event) => {
 
     const coords = getScaledCoordinates(event);
     if (coords) {
+        //console.log(`Mouse Down - Raw: (${event.clientX}, ${event.clientY}), Scaled: (${coords.x}, ${coords.y}), Device: (${state.deviceWidth}x${state.deviceHeight})`);
         state.lastMousePosition = coords;
         sendMouseEvent(AMOTION_EVENT_ACTION_DOWN, state.currentMouseButtons, coords.x, coords.y);
+    } else {
+        console.warn(`Mouse Down - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
     }
 };
 
@@ -573,6 +629,7 @@ const handleMouseUp = (event) => {
 
     const coords = getScaledCoordinates(event);
     const finalCoords = coords || state.lastMousePosition;
+    //console.log(`Mouse Up - Raw: (${event.clientX}, ${event.clientY}), Scaled: (${finalCoords.x}, ${finalCoords.y}), Device: (${state.deviceWidth}x${state.deviceHeight})`);
 
     sendMouseEvent(AMOTION_EVENT_ACTION_UP, state.currentMouseButtons, finalCoords.x, finalCoords.y);
 
@@ -591,8 +648,11 @@ const handleMouseMove = (event) => {
 
     const coords = getScaledCoordinates(event);
     if (coords) {
+        //console.log(`Mouse Move - Raw: (${event.clientX}, ${event.clientY}), Scaled: (${coords.x}, ${coords.y}), Device: (${state.deviceWidth}x${state.deviceHeight})`);
         state.lastMousePosition = coords;
         sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, coords.x, coords.y);
+    } else {
+        console.warn(`Mouse Move - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
     }
 };
 
@@ -606,9 +666,8 @@ const handleMouseLeave = (event) => {
     state.isMouseDown = false;
     state.currentMouseButtons = 0;
 };
-// --- End Mouse Event Handlers ---
 
-// Streaming (merged)
+// Streaming
 const startStreaming = () => {
     if (state.isRunning || (state.ws && state.ws.readyState === WebSocket.OPEN)) {
         log('Cannot start stream: Already running or WebSocket open.');
@@ -617,23 +676,21 @@ const startStreaming = () => {
 
     updateStatus('Connecting...');
     elements.startButton.disabled = true;
-    elements.stopButton.disabled = false; // Enable stop early (consistent)
+    elements.stopButton.disabled = false;
     elements.maxSizeSelect.disabled = true;
     elements.maxFpsSelect.disabled = true;
     elements.bitrateSelect.disabled = true;
     elements.enableAudioInput.disabled = true;
-    elements.enableControlInput.disabled = true; // Added
+    elements.enableControlInput.disabled = true;
 
-    state.controlEnabledAtStart = elements.enableControlInput.checked; // Added
+    state.controlEnabledAtStart = elements.enableControlInput.checked;
 
-    // Reset state (original video/audio state vars + new control state vars)
     Object.assign(state, {
-        converter: null, // Ensure these are reset
+        converter: null,
         audioContext: null,
         sourceBufferInternal: null,
         checkStateIntervalId: null,
         fpsCheckIntervalId: null,
-        // Original reset vars
         currentTimeNotChangedSince: -1,
         bigBufferSince: -1,
         aheadOfBufferSince: -1,
@@ -649,40 +706,37 @@ const startStreaming = () => {
         momentumQualityStats: null,
         noDecodedFramesSince: -1,
         frameTimestamps: [],
-        // Control reset vars (added)
         isMouseDown: false,
         currentMouseButtons: 0,
         lastMousePosition: { x: 0, y: 0 }
     });
 
-    if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId); // Keep clearing old intervals
-    if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId); // Keep clearing old intervals
+    if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId);
+    if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId);
 
     const wsUrl = `ws://${window.location.hostname}:8080`;
     state.ws = new WebSocket(wsUrl);
     state.ws.binaryType = 'arraybuffer';
 
-    initVideoConverter(); // Original video init
+    initVideoConverter();
 
     state.ws.onopen = () => {
         updateStatus('Connected. Requesting stream...');
         log('WebSocket opened. Sending start options.');
-        // Send message including control state (from new)
         state.ws.send(JSON.stringify({
             action: 'start',
             maxSize: parseInt(elements.maxSizeSelect.value) || 0,
             maxFps: parseInt(elements.maxFpsSelect.value) || 0,
             bitrate: (parseInt(elements.bitrateSelect.value) || 8) * 1000000,
             enableAudio: elements.enableAudioInput.checked,
-            enableControl: state.controlEnabledAtStart // Added
+            enableControl: state.controlEnabledAtStart
         }));
 
-        state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL); // Original FPS check start
+        state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL);
     };
 
     state.ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
-            // Original binary data handling for video/audio
             if (!state.isRunning) return;
 
             const dataView = new DataView(event.data);
@@ -715,49 +769,55 @@ const startStreaming = () => {
                             elements.maxFpsSelect.disabled = true;
                             elements.bitrateSelect.disabled = true;
                             elements.enableAudioInput.disabled = true;
-                            elements.enableControlInput.disabled = true; // Added
-                            elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart); // Added
+                            elements.enableControlInput.disabled = true;
+							elements.flipOrientationBtn.disabled = false; // <-- ENABLE BUTTON
+                            elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart);
                             if (!state.checkStateIntervalId) {
-                                // Original checkState start
                                 state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
                             }
                         } else if (message.message === 'Streaming stopped') {
                             stopStreaming(false);
                         }
                         break;
-                    case 'videoInfo': // Original video info handling
+                    case 'videoInfo':
                         state.videoResolution = `${message.width}x${message.height}`;
                         state.deviceWidth = message.width;
                         state.deviceHeight = message.height;
-                        log(`Video dimensions: ${state.videoResolution}`);
-                        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
-                            `${state.deviceWidth} / ${state.deviceHeight}` : '9 / 16'; // Use 9/16 default
+                        log(`Video dimensions updated: ${state.videoResolution}`);
+                        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
+                            ? `${state.deviceWidth} / ${state.deviceHeight}`
+                            : '9 / 16';
                         elements.videoPlaceholder.classList.add('hidden');
                         elements.videoElement.classList.add('visible');
+                        //elements.videoElement.style.width = '100%';
+                        //elements.videoElement.style.height = '100%';
                         if (state.converter) {
                             requestAnimationFrame(() => {
                                 elements.videoElement.play().catch(e => console.warn("Autoplay prevented:", e));
+                                // Ensure border updates after potential layout changes
+                                setTimeout(updateVideoBorder, 50); // <-- ADD THIS (slight delay)
                             });
+                        } else {
+                             setTimeout(updateVideoBorder, 50); // <-- ADD THIS (slight delay)
                         }
                         break;
-                    case 'audioInfo': // Original audio info handling
+                    case 'audioInfo':
                         log(`Audio info: Codec ID 0x${message.codecId?.toString(16)}`);
                         if (elements.enableAudioInput.checked) {
                             setupAudioPlayer(message.codecId);
                         }
                         break;
-                    // Added cases from new version
                     case 'deviceName':
-                         log(`Device name: ${message.name}`);
-                         break;
+                        log(`Device name: ${message.name}`);
+                        break;
                     case 'error':
-                         log(`Server Error: ${message.message}`);
-                         updateStatus(`Error: ${message.message}`);
-                         stopStreaming(false);
-                         break;
+                        log(`Server Error: ${message.message}`);
+                        updateStatus(`Error: ${message.message}`);
+                        stopStreaming(false);
+                        break;
                     case 'deviceMessage':
-                         console.log("Received message from device (e.g., clipboard):", message.data);
-                         break;
+                        console.log("Received message from device (e.g., clipboard):", message.data);
+                        break;
                 }
             } catch (e) {
                 console.error('Error parsing JSON message:', e, 'Raw data:', event.data);
@@ -789,8 +849,8 @@ const stopStreaming = (sendDisconnect = true) => {
         return;
     }
 
-    if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId); // Original interval clear
-    if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId); // Original interval clear
+    if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId);
+    if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId);
 
     state.isRunning = false;
     elements.startButton.disabled = false;
@@ -799,8 +859,8 @@ const stopStreaming = (sendDisconnect = true) => {
     elements.maxFpsSelect.disabled = false;
     elements.bitrateSelect.disabled = false;
     elements.enableAudioInput.disabled = false;
-    elements.enableControlInput.disabled = false; // Added
-    elements.videoElement.classList.remove('control-enabled'); // Added
+    elements.enableControlInput.disabled = false;
+    elements.videoElement.classList.remove('control-enabled');
 
     if (state.ws) {
         if (sendDisconnect && state.ws.readyState === WebSocket.OPEN) {
@@ -817,7 +877,6 @@ const stopStreaming = (sendDisconnect = true) => {
         state.ws = null;
     }
 
-    // Original converter cleanup
     if (state.converter) {
         try {
             state.converter.appendRawData(new Uint8Array([]));
@@ -829,7 +888,6 @@ const stopStreaming = (sendDisconnect = true) => {
         state.sourceBufferInternal = null;
     }
 
-    // Original audio cleanup
     if (state.audioContext) {
         state.audioContext.close().catch(e => console.error(`Error closing AudioContext: ${e}`));
         state.audioContext = null;
@@ -847,9 +905,7 @@ const stopStreaming = (sendDisconnect = true) => {
         elements.videoElement.load();
     } catch (e) {}
 
-    // Reset state (original video/audio state + new control state)
     Object.assign(state, {
-        // Original reset vars
         deviceWidth: 0,
         deviceHeight: 0,
         videoResolution: 'Unknown',
@@ -865,7 +921,6 @@ const stopStreaming = (sendDisconnect = true) => {
         momentumQualityStats: null,
         noDecodedFramesSince: -1,
         frameTimestamps: [],
-        // Control reset vars (added)
         controlEnabledAtStart: false,
         isMouseDown: false,
         currentMouseButtons: 0,
@@ -874,16 +929,17 @@ const stopStreaming = (sendDisconnect = true) => {
 
     elements.videoPlaceholder.classList.remove('hidden');
     elements.videoElement.classList.remove('visible');
-    elements.streamArea.style.aspectRatio = '9 / 16'; // Use 9/16 default
+    elements.streamArea.style.aspectRatio = '9 / 16';
 
     if (document.fullscreenElement === elements.videoElement) {
         document.exitFullscreen().catch(e => console.error("Error exiting fullscreen:", e));
     }
     elements.videoElement.classList.remove('fullscreen');
+    elements.videoBorder.style.display = 'none'; // <-- ADD THIS
     log('Stream stopped.');
 };
 
-// Event Listeners (original UI + new control listeners)
+// Event Listeners
 elements.themeToggle.addEventListener('click', () => {
     const body = document.body;
     const newTheme = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
@@ -934,9 +990,8 @@ window.addEventListener('beforeunload', () => {
     }
 });
 
-// Control event listeners (added)
 elements.videoElement.addEventListener('mousedown', handleMouseDown);
-document.addEventListener('mouseup', handleMouseUp); // Listen on document
+document.addEventListener('mouseup', handleMouseUp);
 elements.videoElement.addEventListener('mousemove', handleMouseMove);
 elements.videoElement.addEventListener('mouseleave', handleMouseLeave);
 elements.videoElement.addEventListener('contextmenu', (e) => {
@@ -945,6 +1000,45 @@ elements.videoElement.addEventListener('contextmenu', (e) => {
     }
 });
 
+
+// --- Add this event listener ---
+elements.flipOrientationBtn.addEventListener('click', () => {
+    if (!state.isRunning) {
+        log("Cannot flip orientation: Stream not running.");
+        return;
+    }
+    if (state.deviceWidth > 0 && state.deviceHeight > 0) {
+        log(`Flipping orientation from ${state.deviceWidth}x${state.deviceHeight}`);
+        // Swap the dimensions in the state
+        const tempWidth = state.deviceWidth;
+        state.deviceWidth = state.deviceHeight;
+        state.deviceHeight = tempWidth;
+        state.videoResolution = `${state.deviceWidth}x${state.deviceHeight}`; // Update resolution string
+
+        log(`New orientation state: ${state.deviceWidth}x${state.deviceHeight}`);
+
+        // Update container aspect ratio
+        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
+            ? `${state.deviceWidth} / ${state.deviceHeight}`
+            : '9 / 16';
+
+        // Immediately update the visuals
+        // Use requestAnimationFrame to allow potential layout reflow first
+         requestAnimationFrame(() => {
+            updateVideoBorder();
+         });
+
+    } else {
+        log("Cannot flip orientation: Dimensions not set.");
+    }
+});
+
+elements.flipOrientationBtn.disabled = true;
+
+const resizeObserver = new ResizeObserver(() => {
+    updateVideoBorder(); // <-- ADD THIS
+});
+resizeObserver.observe(elements.videoElement);
 
 // Initialization
 elements.stopButton.disabled = true;
