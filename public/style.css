@@ -122,12 +122,10 @@ header h1 {
     margin-bottom: 1rem;
     width: auto;
     height: auto;
-    /* Apply max constraints here so placeholder is positioned relative to them */
     max-width: min(var(--video-max-base-width), 90vw);
     max-height: 75vh;
-    /* Set initial aspect ratio here to define the area */
     aspect-ratio: 9 / 16;
-    display: flex; /* Needed for aspect-ratio to work correctly with children */
+    display: flex;
     align-items: center;
     justify-content: center;
 }
@@ -141,13 +139,18 @@ header h1 {
     border-radius: 8px;
     box-shadow: var(--shadow);
     transition: opacity 0.3s ease;
-    opacity: 0; /* Initially hidden until stream starts */
-    max-width: 100%; /* Ensure it doesn't overflow streamArea */
+    opacity: 0;
+    max-width: 100%;
     max-height: 100%;
+    cursor: default; /* Default cursor */
 }
 
 #screen.visible {
     opacity: 1;
+}
+
+#screen.control-enabled {
+    cursor: crosshair; /* Indicate interaction area */
 }
 
 #screen.fullscreen {
@@ -161,10 +164,10 @@ header h1 {
     margin: 0;
     z-index: 2000;
     border-radius: 0;
-    background: #000; /* Ensure black background for letterboxing */
-    aspect-ratio: auto; /* Let screen size dictate */
+    background: #000;
+    aspect-ratio: auto;
     box-shadow: none;
-    opacity: 1; /* Ensure visible in fullscreen */
+    opacity: 1;
 }
 
 #videoPlaceholder {
@@ -183,8 +186,8 @@ header h1 {
     transition: opacity 0.3s ease;
     z-index: 10;
     pointer-events: none;
-    border-radius: 8px; /* Match video radius */
-    box-shadow: var(--shadow); /* Match video shadow */
+    border-radius: 8px;
+    box-shadow: var(--shadow);
 }
 
 #videoPlaceholder.hidden {

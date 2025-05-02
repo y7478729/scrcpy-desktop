@@ -1729,8 +1729,16 @@
   var BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
   var CODEC_IDS = { H264: 1748121140, RAW: 7496055 };
   var NALU_TYPE_IDR = 5;
-  var FPS_CHECK_INTERVAL = 1e4;
-  var TARGET_FPS_VALUES = [30, 60, 120];
+  var FPS_CHECK_INTERVAL = 1e3;
+  var TARGET_FPS_VALUES = [30, 50, 60, 120];
+  var CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
+  var AMOTION_EVENT_ACTION_DOWN = 0;
+  var AMOTION_EVENT_ACTION_UP = 1;
+  var AMOTION_EVENT_ACTION_MOVE = 2;
+  var AMOTION_EVENT_BUTTON_PRIMARY = 1;
+  var AMOTION_EVENT_BUTTON_SECONDARY = 2;
+  var AMOTION_EVENT_BUTTON_TERTIARY = 4;
+  var POINTER_ID_MOUSE = -1n;
   var IS_SAFARI = !!window.safari;
   var IS_CHROME = navigator.userAgent.includes("Chrome");
   var IS_MAC = navigator.platform.startsWith("Mac");
@@ -1743,6 +1751,8 @@
     maxSizeSelect: document.getElementById("maxSize"),
     maxFpsSelect: document.getElementById("maxFps"),
     enableAudioInput: document.getElementById("enableAudio"),
+    enableControlInput: document.getElementById("enableControl"),
+    // Added
     statusDiv: document.getElementById("status"),
     themeToggle: document.getElementById("themeToggle"),
     fullscreenBtn: document.getElementById("fullscreenBtn"),
@@ -1753,6 +1763,7 @@
   };
   var state = {
     ws: null,
+    // Video/Audio state (from original)
     converter: null,
     isRunning: false,
     audioContext: null,
@@ -1777,8 +1788,12 @@
     momentumQualityStats: null,
     noDecodedFramesSince: -1,
     frameTimestamps: [],
-    // For FPS calculation
-    fpsCheckIntervalId: null
+    fpsCheckIntervalId: null,
+    // Control state (from new)
+    controlEnabledAtStart: false,
+    isMouseDown: false,
+    currentMouseButtons: 0,
+    lastMousePosition: { x: 0, y: 0 }
   };
   var log = (message) => {
     console.log(message);
@@ -2094,6 +2109,142 @@
       state.noDecodedFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
     }
   };
+  var getScaledCoordinates = (event) => {
+    const video = elements.videoElement;
+    const screenInfo = {
+      videoSize: { width: state.deviceWidth, height: state.deviceHeight }
+    };
+    if (!screenInfo || !screenInfo.videoSize || !screenInfo.videoSize.width || !screenInfo.videoSize.height) {
+      return null;
+    }
+    const { width, height } = screenInfo.videoSize;
+    const target = video;
+    const rect = target.getBoundingClientRect();
+    let { clientWidth, clientHeight } = target;
+    let touchX = event.clientX - rect.left;
+    let touchY = event.clientY - rect.top;
+    const videoRatio = width / height;
+    const elementRatio = clientWidth / clientHeight;
+    if (elementRatio > videoRatio) {
+      const realWidth = clientHeight * videoRatio;
+      const barsWidth = (clientWidth - realWidth) / 2;
+      if (touchX < barsWidth || touchX > barsWidth + realWidth) {
+        return null;
+      }
+      touchX -= barsWidth;
+      clientWidth = realWidth;
+    } else if (elementRatio < videoRatio) {
+      const realHeight = clientWidth / videoRatio;
+      const barsHeight = (clientHeight - realHeight) / 2;
+      if (touchY < barsHeight || touchY > barsHeight + realHeight) {
+        return null;
+      }
+      touchY -= barsHeight;
+      clientHeight = realHeight;
+    }
+    let deviceX = Math.round(touchX * width / clientWidth);
+    let deviceY = Math.round(touchY * height / clientHeight);
+    deviceX = Math.max(0, Math.min(width, deviceX));
+    deviceY = Math.max(0, Math.min(height, deviceY));
+    return { x: deviceX, y: deviceY };
+  };
+  var sendControlMessage = (buffer) => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN && state.controlEnabledAtStart) {
+      try {
+        state.ws.send(buffer);
+      } catch (e) {
+        console.error("Failed to send control message:", e);
+      }
+    }
+  };
+  var sendMouseEvent = (action, buttons, x, y) => {
+    if (!state.deviceWidth || !state.deviceHeight || !state.controlEnabledAtStart) return;
+    const buffer = new ArrayBuffer(32);
+    const dataView = new DataView(buffer);
+    dataView.setUint8(0, CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT);
+    dataView.setUint8(1, action);
+    dataView.setBigInt64(2, POINTER_ID_MOUSE, false);
+    dataView.setInt32(10, x, false);
+    dataView.setInt32(14, y, false);
+    dataView.setUint16(18, state.deviceWidth, false);
+    dataView.setUint16(20, state.deviceHeight, false);
+    dataView.setUint16(22, 65535, false);
+    dataView.setUint32(24, 0, false);
+    dataView.setUint32(28, buttons, false);
+    sendControlMessage(buffer);
+  };
+  var handleMouseDown = (event) => {
+    if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
+    event.preventDefault();
+    state.isMouseDown = true;
+    let buttonFlag = 0;
+    switch (event.button) {
+      case 0:
+        buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY;
+        break;
+      case 1:
+        buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY;
+        break;
+      case 2:
+        buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY;
+        break;
+      default:
+        return;
+    }
+    state.currentMouseButtons |= buttonFlag;
+    const coords = getScaledCoordinates(event);
+    if (coords) {
+      state.lastMousePosition = coords;
+      sendMouseEvent(AMOTION_EVENT_ACTION_DOWN, state.currentMouseButtons, coords.x, coords.y);
+    }
+  };
+  var handleMouseUp = (event) => {
+    if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
+    event.preventDefault();
+    let buttonFlag = 0;
+    switch (event.button) {
+      case 0:
+        buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY;
+        break;
+      case 1:
+        buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY;
+        break;
+      case 2:
+        buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY;
+        break;
+      default:
+        return;
+    }
+    if (!(state.currentMouseButtons & buttonFlag)) {
+      return;
+    }
+    const coords = getScaledCoordinates(event);
+    const finalCoords = coords || state.lastMousePosition;
+    sendMouseEvent(AMOTION_EVENT_ACTION_UP, state.currentMouseButtons, finalCoords.x, finalCoords.y);
+    state.currentMouseButtons &= ~buttonFlag;
+    if (state.currentMouseButtons === 0) {
+      state.isMouseDown = false;
+    } else {
+      sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, finalCoords.x, finalCoords.y);
+    }
+  };
+  var handleMouseMove = (event) => {
+    if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight || !state.isMouseDown) return;
+    event.preventDefault();
+    const coords = getScaledCoordinates(event);
+    if (coords) {
+      state.lastMousePosition = coords;
+      sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, coords.x, coords.y);
+    }
+  };
+  var handleMouseLeave = (event) => {
+    if (!state.isRunning || !state.controlEnabledAtStart || !state.isMouseDown || state.currentMouseButtons === 0) return;
+    event.preventDefault();
+    console.log(`Mouse leave while buttons pressed: ${state.currentMouseButtons}`);
+    sendMouseEvent(AMOTION_EVENT_ACTION_UP, state.currentMouseButtons, state.lastMousePosition.x, state.lastMousePosition.y);
+    state.isMouseDown = false;
+    state.currentMouseButtons = 0;
+  };
   var startStreaming = () => {
     if (state.isRunning || state.ws && state.ws.readyState === WebSocket.OPEN) {
       log("Cannot start stream: Already running or WebSocket open.");
@@ -2101,11 +2252,21 @@
     }
     updateStatus("Connecting...");
     elements.startButton.disabled = true;
+    elements.stopButton.disabled = false;
     elements.maxSizeSelect.disabled = true;
     elements.maxFpsSelect.disabled = true;
     elements.bitrateSelect.disabled = true;
     elements.enableAudioInput.disabled = true;
+    elements.enableControlInput.disabled = true;
+    state.controlEnabledAtStart = elements.enableControlInput.checked;
     Object.assign(state, {
+      converter: null,
+      // Ensure these are reset
+      audioContext: null,
+      sourceBufferInternal: null,
+      checkStateIntervalId: null,
+      fpsCheckIntervalId: null,
+      // Original reset vars
       currentTimeNotChangedSince: -1,
       bigBufferSince: -1,
       aheadOfBufferSince: -1,
@@ -2113,7 +2274,6 @@
       seekingSince: -1,
       removeStart: -1,
       removeEnd: -1,
-      sourceBufferInternal: null,
       receivedFirstAudioPacket: false,
       nextAudioTime: 0,
       audioBufferQueue: [],
@@ -2121,7 +2281,11 @@
       inputBytes: [],
       momentumQualityStats: null,
       noDecodedFramesSince: -1,
-      frameTimestamps: []
+      frameTimestamps: [],
+      // Control reset vars (added)
+      isMouseDown: false,
+      currentMouseButtons: 0,
+      lastMousePosition: { x: 0, y: 0 }
     });
     if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId);
     if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId);
@@ -2137,7 +2301,9 @@
         maxSize: parseInt(elements.maxSizeSelect.value) || 0,
         maxFps: parseInt(elements.maxFpsSelect.value) || 0,
         bitrate: (parseInt(elements.bitrateSelect.value) || 8) * 1e6,
-        enableAudio: elements.enableAudioInput.checked
+        enableAudio: elements.enableAudioInput.checked,
+        enableControl: state.controlEnabledAtStart
+        // Added
       }));
       state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL);
     };
@@ -2172,6 +2338,8 @@
                 elements.maxFpsSelect.disabled = true;
                 elements.bitrateSelect.disabled = true;
                 elements.enableAudioInput.disabled = true;
+                elements.enableControlInput.disabled = true;
+                elements.videoElement.classList.toggle("control-enabled", state.controlEnabledAtStart);
                 if (!state.checkStateIntervalId) {
                   state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
                 }
@@ -2184,7 +2352,7 @@
               state.deviceWidth = message.width;
               state.deviceHeight = message.height;
               log(`Video dimensions: ${state.videoResolution}`);
-              elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ? `${state.deviceWidth} / ${state.deviceHeight}` : "";
+              elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ? `${state.deviceWidth} / ${state.deviceHeight}` : "9 / 16";
               elements.videoPlaceholder.classList.add("hidden");
               elements.videoElement.classList.add("visible");
               if (state.converter) {
@@ -2198,6 +2366,18 @@
               if (elements.enableAudioInput.checked) {
                 setupAudioPlayer(message.codecId);
               }
+              break;
+            // Added cases from new version
+            case "deviceName":
+              log(`Device name: ${message.name}`);
+              break;
+            case "error":
+              log(`Server Error: ${message.message}`);
+              updateStatus(`Error: ${message.message}`);
+              stopStreaming(false);
+              break;
+            case "deviceMessage":
+              console.log("Received message from device (e.g., clipboard):", message.data);
               break;
           }
         } catch (e) {
@@ -2235,6 +2415,8 @@
     elements.maxFpsSelect.disabled = false;
     elements.bitrateSelect.disabled = false;
     elements.enableAudioInput.disabled = false;
+    elements.enableControlInput.disabled = false;
+    elements.videoElement.classList.remove("control-enabled");
     if (state.ws) {
       if (sendDisconnect && state.ws.readyState === WebSocket.OPEN) {
         try {
@@ -2282,6 +2464,7 @@
     } catch (e) {
     }
     Object.assign(state, {
+      // Original reset vars
       deviceWidth: 0,
       deviceHeight: 0,
       videoResolution: "Unknown",
@@ -2296,11 +2479,16 @@
       inputBytes: [],
       momentumQualityStats: null,
       noDecodedFramesSince: -1,
-      frameTimestamps: []
+      frameTimestamps: [],
+      // Control reset vars (added)
+      controlEnabledAtStart: false,
+      isMouseDown: false,
+      currentMouseButtons: 0,
+      lastMousePosition: { x: 0, y: 0 }
     });
     elements.videoPlaceholder.classList.remove("hidden");
     elements.videoElement.classList.remove("visible");
-    elements.streamArea.style.aspectRatio = "";
+    elements.streamArea.style.aspectRatio = "9 / 16";
     if (document.fullscreenElement === elements.videoElement) {
       document.exitFullscreen().catch((e) => console.error("Error exiting fullscreen:", e));
     }
@@ -2349,6 +2537,15 @@
   window.addEventListener("beforeunload", () => {
     if (state.isRunning || state.ws && state.ws.readyState === WebSocket.OPEN) {
       stopStreaming(true);
+    }
+  });
+  elements.videoElement.addEventListener("mousedown", handleMouseDown);
+  document.addEventListener("mouseup", handleMouseUp);
+  elements.videoElement.addEventListener("mousemove", handleMouseMove);
+  elements.videoElement.addEventListener("mouseleave", handleMouseLeave);
+  elements.videoElement.addEventListener("contextmenu", (e) => {
+    if (state.controlEnabledAtStart && state.isRunning) {
+      e.preventDefault();
     }
   });
   elements.stopButton.disabled = true;
