@@ -6,9 +6,6 @@
 
 **Scrcpy Desktop** is a user-friendly web application that streams your Android device's screen and audio directly to your browser. It utilizes the powerful `scrcpy` server for efficient screen and audio capture.
 
-![Scrcpy Desktop Screenshot Placeholder](placeholder.png)
-*Replace this with an actual screenshot or GIF of your application!*
-
 ## ✅ Prerequisites
 
 Before you begin, ensure you have the following installed and configured:
@@ -22,24 +19,29 @@ Before you begin, ensure you have the following installed and configured:
 
 Follow these steps to get Scrcpy Desktop running locally:
 
-1.  **Clone the Repository:**
+1.  **Clone or Download the Repository:**
     ```bash
+	Clone this repository or download the ZIP file. 
     git clone https://github.com/serifpersia/scrcpy-desktop.git
     cd scrcpy-desktop
     ```
 
-2.  **Install Dependencies:**
+2.  **Install Dependencies & Build:**
     ```bash
     npm install
+	npm run build
     ```
 ## Usage
 
 1.  **Start the Application:**
+
+	Use run.bat/.sh to start automatic install/build/start process or start it manually after npm install & build steps
+
     ```bash
     npm start
 
 2.  **Access the Web Interface:**
-    *   Open your web browser and navigate to the URL provided in the terminal (usually `http://localhost:3000` or similar).
+    *   Open your web browser and navigate to the URL provided in the terminal (usually `http://localhost:8000` or similar).
 
 3.  **Control Streaming:**
     *   Use the web interface controls to select your desired settings (resolution, bitrate, FPS, audio).
