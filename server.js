@@ -179,6 +179,19 @@ async function handleStart(clientId, ws, message) {
     }
 }
 
+async function checkReverseTunnelExists(deviceId, tunnelString) {
+    log(LogLevel.DEBUG, `[Exec] Checking reverse tunnel: ${tunnelString} for device ${deviceId}`);
+    try {
+        const { stdout } = await executeCommand(`adb -s ${deviceId} reverse --list`, `List reverse tunnels (Device: ${deviceId})`);
+        const exists = stdout.includes(tunnelString);
+        log(LogLevel.DEBUG, `[Exec] Reverse tunnel ${tunnelString} ${exists ? 'exists' : 'does not exist'}`);
+        return exists;
+    } catch (error) {
+        log(LogLevel.DEBUG, `[Exec] Error checking reverse tunnel list: ${error.message}. Assuming tunnel does not exist.`);
+        return false;
+    }
+}
+
 async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
     log(LogLevel.INFO, `[Session ${scid}] Starting setup process...`);
     const session = {
@@ -193,7 +206,7 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
     if (runOptions.audio === 'true') session.expectedSockets.push('audio');
     if (runOptions.control === 'true') session.expectedSockets.push('control');
 
-    if(session.expectedSockets.length === 0) {
+    if (session.expectedSockets.length === 0) {
         throw new Error("No streams (video, audio, control) enabled.");
     }
 
@@ -203,7 +216,12 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
     try {
         await executeCommand(`adb -s ${deviceId} push "${SERVER_JAR_PATH}" "${SERVER_DEVICE_PATH}"`, `Push server JAR (SCID: ${scid})`);
         const tunnelString = `localabstract:scrcpy_${scid}`;
-        await executeCommand(`adb -s ${deviceId} reverse --remove ${tunnelString}`, `Remove specific tunnel (SCID: ${scid})`).catch(() => {});
+
+        if (await checkReverseTunnelExists(deviceId, tunnelString)) {
+            await executeCommand(`adb -s ${deviceId} reverse --remove ${tunnelString}`, `Remove specific tunnel (SCID: ${scid})`);
+        } else {
+            log(LogLevel.DEBUG, `[Session ${scid}] No reverse tunnel ${tunnelString} found, skipping removal.`);
+        }
         await executeCommand(`adb -s ${deviceId} reverse --remove-all`, `Remove all tunnels (SCID: ${scid})`).catch(() => {});
         await executeCommand(`adb -s ${deviceId} reverse ${tunnelString} tcp:${port}`, `Setup reverse tunnel (SCID: ${scid})`);
         session.tunnelActive = true;
@@ -221,9 +239,9 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         if (runOptions.max_size) args.push(`max_size=${runOptions.max_size}`);
         if (runOptions.max_fps) args.push(`max_fps=${runOptions.max_fps}`);
         if (runOptions.video_bit_rate) args.push(`video_bit_rate=${runOptions.video_bit_rate}`);
-        args.push(`video=${runOptions.video}`);
-        args.push(`audio=${runOptions.audio}`);
-        args.push(`control=${runOptions.control}`);
+        if (runOptions.video === 'false') args.push(`video=false`);
+        if (runOptions.audio === 'false') args.push(`audio=false`);
+        if (runOptions.control === 'false') args.push(`control=false`);
 
         const command = `CLASSPATH=${SERVER_DEVICE_PATH} app_process / com.genymobile.scrcpy.Server ${args.join(' ')}`;
         const fullAdbCommand = `adb -s ${deviceId} shell "${command}"`;
@@ -269,21 +287,20 @@ async function cleanupSession(scid) {
     log(LogLevel.INFO, `[Cleanup ${scid}] Starting cleanup...`);
     sessions.delete(scid);
 
-    const { deviceId, tcpServer, processStream, tunnelActive, videoSocket, audioSocket, controlSocket, clientId, unidentifiedSockets } = session;
+    const { deviceId, tcpServer, processStream, videoSocket, audioSocket, controlSocket, clientId, unidentifiedSockets } = session;
 
     unidentifiedSockets?.forEach(sock => sock.destroy());
     videoSocket?.destroy(); audioSocket?.destroy(); controlSocket?.destroy();
 
     if (processStream && !processStream.killed) { processStream.kill('SIGKILL'); log(LogLevel.INFO, `[Cleanup ${scid}] Killed scrcpy-server process.`); }
-    if (tunnelActive && deviceId) { await executeCommand(`adb -s ${deviceId} reverse --remove localabstract:scrcpy_${scid}`, `Remove reverse tunnel (SCID: ${scid})`).catch(() => {}); }
     if (tcpServer) { await new Promise(resolve => tcpServer.close(resolve)); log(LogLevel.INFO, `[Cleanup ${scid}] TCP server closed.`); }
 
     const client = wsClients.get(clientId);
     if (client) {
-         if(client.session === scid) client.session = null;
-         if(client.ws?.readyState === WebSocket.OPEN) {
-             client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming stopped by server cleanup' }));
-         }
+        if (client.session === scid) client.session = null;
+        if (client.ws?.readyState === WebSocket.OPEN) {
+            client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming stopped by server cleanup' }));
+        }
     }
     log(LogLevel.INFO, `[Cleanup ${scid}] Cleanup finished.`);
 }
@@ -397,7 +414,7 @@ function processData(socket, data) {
     }
 }
 
-function checkAndSendStreamingStarted(session, client) {
+async function checkAndSendStreamingStarted(session, client) {
     if (!session || !client || client.ws?.readyState !== WebSocket.OPEN || session.streamingStartedNotified) {
         return;
     }
@@ -410,11 +427,28 @@ function checkAndSendStreamingStarted(session, client) {
         log(LogLevel.INFO, `[Session ${session.scid}] All expected sockets identified. Sending 'Streaming started' status.`);
         client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming started' }));
         session.streamingStartedNotified = true;
+
+        if (session.tunnelActive && session.deviceId) {
+            const tunnelString = `localabstract:scrcpy_${session.scid}`;
+            try {
+                if (await checkReverseTunnelExists(session.deviceId, tunnelString)) {
+                    await executeCommand(
+                        `adb -s ${session.deviceId} reverse --remove ${tunnelString}`,
+                        `Remove reverse tunnel after sockets opened (SCID: ${session.scid})`
+                    );
+                } else {
+                    log(LogLevel.DEBUG, `[Session ${session.scid}] Reverse tunnel ${tunnelString} already removed or not found.`);
+                }
+                session.tunnelActive = false;
+                log(LogLevel.INFO, `[Session ${session.scid}] Reverse tunnel removed after all sockets opened.`);
+            } catch (error) {
+                log(LogLevel.WARN, `[Session ${session.scid}] Failed to remove reverse tunnel: ${error.message}`);
+            }
+        }
     } else {
         log(LogLevel.DEBUG, `[Session ${session.scid}] Waiting for all sockets. Video: ${!!session.videoSocket}, Audio: ${!!session.audioSocket}, Control: ${!!session.controlSocket}`);
     }
 }
-
 
 function attemptIdentifyControlByDeduction(session, client) {
     if (!session) return;
