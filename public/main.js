@@ -3389,19 +3389,23 @@ const { setLogger } = require('h264-converter');
 
 setLogger(() => {}, console.error);
 
-// Constants (Video/Audio/FPS)
+// Constants (Video)
 const CHECK_STATE_INTERVAL_MS = 250;
 const MAX_SEEK_WAIT_MS = 1500;
 const MAX_TIME_TO_RECOVER = 200;
+const IS_SAFARI = !!window.safari;
+const IS_CHROME = navigator.userAgent.includes('Chrome');
+const IS_MAC = navigator.platform.startsWith('Mac');
+const MAX_BUFFER = IS_SAFARI ? 2 : IS_CHROME && IS_MAC ? 0.9 : 0.2;
+const MAX_AHEAD = -0.2;
+const DEFAULT_FRAMES_PER_SECOND = 60;
+const DEFAULT_FRAMES_PER_FRAGMENT = 1;
+const NALU_TYPE_IDR = 5;
+
+// Constants (Audio/Control)
 const AUDIO_BYTES_PER_SAMPLE = 2;
 const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
 const CODEC_IDS = { H264: 0x68323634, AAC: 0x00616163 };
-const NALU_TYPE_IDR = 5;
-const FPS_CHECK_INTERVAL = 10000;
-const TARGET_FPS_VALUES = [30, 50, 60, 120];
-const PAUSE_DETECTION_THRESHOLD = 1000;
-
-// Constants (Control)
 const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
 const AMOTION_EVENT_ACTION_DOWN = 0;
 const AMOTION_EVENT_ACTION_UP = 1;
@@ -3410,13 +3414,6 @@ const AMOTION_EVENT_BUTTON_PRIMARY = 1;
 const AMOTION_EVENT_BUTTON_SECONDARY = 2;
 const AMOTION_EVENT_BUTTON_TERTIARY = 4;
 const POINTER_ID_MOUSE = -1n;
-
-// Browser-specific settings
-const IS_SAFARI = !!window.safari;
-const IS_CHROME = navigator.userAgent.includes('Chrome');
-const IS_MAC = navigator.platform.startsWith('Mac');
-const MAX_BUFFER = IS_SAFARI ? 2 : IS_CHROME && IS_MAC ? 0.9 : 0.2;
-const MAX_AHEAD = -0.2;
 
 // DOM Elements
 const elements = {
@@ -3462,15 +3459,13 @@ let state = {
     videoStats: [],
     inputBytes: [],
     momentumQualityStats: null,
-    noExceptionFramesSince: -1,
-    frameTimestamps: [],
+    noDecodedFramesSince: -1,
     controlEnabledAtStart: false,
     isMouseDown: false,
     currentMouseButtons: 0,
     lastMousePosition: { x: 0, y: 0 },
     nextAudioTime: 0,
     totalAudioFrames: 0,
-    lastFrameReceived: -1,
 };
 
 // Utility Functions
@@ -3536,52 +3531,218 @@ const isIFrame = (frameData) => {
     return frameData.length > offset && (frameData[offset] & 0x1F) === NALU_TYPE_IDR;
 };
 
-// FPS Calculation
-const calculateAverageFPS = () => {
-    const now = Date.now();
-    state.frameTimestamps = state.frameTimestamps.filter(ts => now - ts < FPS_CHECK_INTERVAL);
-    const frameCount = state.frameTimestamps.length;
-    if (frameCount < 2) return null;
+// Video Handling
+const initVideoConverter = () => {
+    const fps = parseInt(elements.maxFpsSelect.value) || DEFAULT_FRAMES_PER_SECOND;
+    state.converter = new VideoConverter(elements.videoElement, fps, DEFAULT_FRAMES_PER_FRAGMENT);
+    state.sourceBufferInternal = state.converter?.sourceBuffer || null;
 
-    const timeSpan = (state.frameTimestamps[frameCount - 1] - state.frameTimestamps[0]) / 1000;
-    const fps = frameCount / timeSpan;
-
-    return TARGET_FPS_VALUES.reduce((prev, curr) =>
-        Math.abs(curr - fps) < Math.abs(prev - fps) ? curr : prev
-    );
+    elements.videoElement.addEventListener('canplay', onVideoCanPlay, { once: true });
+    elements.videoElement.removeEventListener('error', onVideoError);
+    elements.videoElement.addEventListener('error', onVideoError);
 };
 
-const checkAndUpdateFPS = () => {
-    const now = Date.now();
-    if (state.lastFrameReceived !== -1 && now - state.lastFrameReceived > PAUSE_DETECTION_THRESHOLD) {
-        log('Stream paused, skipping FPS check');
+const onVideoCanPlay = () => {
+    if (state.isRunning) {
+        elements.videoElement.play().catch(e => console.warn("Autoplay prevented:", e));
+    }
+};
+
+const onVideoError = (e) => {
+    console.error('Video Element Error:', e);
+    log(`Video Error: ${elements.videoElement.error?.message} (Code: ${elements.videoElement.error?.code})`);
+};
+
+const cleanSourceBuffer = () => {
+    if (!state.sourceBufferInternal || state.sourceBufferInternal.updating || state.removeStart < 0 || state.removeEnd <= state.removeStart) {
+        state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
+        state.removeStart = state.removeEnd = -1;
         return;
     }
 
-    const calculatedFPS = calculateAverageFPS();
-    const currentFPS = parseInt(elements.maxFpsSelect.value);
-
-    if (calculatedFPS && calculatedFPS !== currentFPS) {
-        reinitializeConverter(calculatedFPS);
+    try {
+        console.log(`Removing source buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
+        state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
+        state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
+    } catch (e) {
+        console.error(`Failed to clean source buffer: ${e}`);
+        state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
+        state.removeStart = state.removeEnd = -1;
     }
 };
 
-const reinitializeConverter = (newFPS) => {
-    log(`Reinitializing stream with new FPS: ${newFPS}`);
-    elements.maxFpsSelect.value = newFPS.toString();
+const checkForIFrameAndCleanBuffer = (frameData) => {
+    if (IS_SAFARI || !isIFrame(frameData)) {
+        return;
+    }
 
-    stopStreaming(true);
-    setTimeout(() => {
-        if (state.isRunning || (state.ws && state.ws.readyState === WebSocket.OPEN)) {
-            console.warn('Stream still active after delay, aborting restart');
-            return;
+    if (!state.sourceBufferInternal) {
+        state.sourceBufferInternal = state.converter?.sourceBuffer || null;
+        if (!state.sourceBufferInternal) return;
+    }
+
+    if (elements.videoElement.buffered && elements.videoElement.buffered.length) {
+        const start = elements.videoElement.buffered.start(0);
+        const end = elements.videoElement.buffered.end(0) | 0;
+
+        if (end !== 0 && start < end) {
+            if (state.removeEnd !== -1) {
+                state.removeEnd = end;
+            } else {
+                state.removeStart = start;
+                state.removeEnd = end;
+            }
+            state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
         }
-        log('Restarting stream with new FPS');
-        startStreaming();
-    }, 100);
+    }
 };
 
-// Audio Handling
+// Video Playback Quality
+const getVideoPlaybackQuality = () => {
+    const video = elements.videoElement;
+    if (!video) return null;
+
+    const now = Date.now();
+    if (typeof video.getVideoPlaybackQuality === 'function') {
+        const temp = video.getVideoPlaybackQuality();
+        return {
+            timestamp: now,
+            decodedFrames: temp.totalVideoFrames,
+            droppedFrames: temp.droppedVideoFrames,
+        };
+    }
+
+    if (typeof video.webkitDecodedFrameCount !== 'undefined') {
+        return {
+            timestamp: now,
+            decodedFrames: video.webkitDecodedFrameCount,
+            droppedFrames: video.webkitDroppedFrameCount,
+        };
+    }
+    return null;
+};
+
+const calculateMomentumStats = () => {
+    const stat = getVideoPlaybackQuality();
+    if (!stat) return;
+
+    const timestamp = Date.now();
+    const oneSecondBefore = timestamp - 1000;
+    state.videoStats.push(stat);
+    state.videoStats = state.videoStats.filter(s => s.timestamp >= oneSecondBefore);
+    state.inputBytes = state.inputBytes.filter(b => b.timestamp >= oneSecondBefore);
+
+    const inputBytes = state.inputBytes.reduce((sum, item) => sum + item.bytes, 0);
+    const inputFrames = state.inputBytes.length;
+
+    if (state.videoStats.length) {
+        const oldest = state.videoStats[0];
+        const decodedFrames = stat.decodedFrames - oldest.decodedFrames;
+        const droppedFrames = stat.droppedFrames - oldest.droppedFrames;
+        state.momentumQualityStats = {
+            decodedFrames,
+            droppedFrames,
+            inputBytes,
+            inputFrames,
+            timestamp,
+        };
+    }
+};
+
+const checkForBadState = () => {
+    if (!state.isRunning || !state.converter) return;
+
+    const { currentTime } = elements.videoElement;
+    const now = Date.now();
+    let hasReasonToJump = false;
+
+    calculateMomentumStats();
+
+    if (state.momentumQualityStats) {
+        if (state.momentumQualityStats.decodedFrames === 0 && state.momentumQualityStats.inputFrames > 0) {
+            if (state.noDecodedFramesSince === -1) {
+                state.noDecodedFramesSince = now;
+            } else {
+                const time = now - state.noDecodedFramesSince;
+                if (time > MAX_TIME_TO_RECOVER) {
+                    hasReasonToJump = true;
+                }
+            }
+        } else {
+            state.noDecodedFramesSince = -1;
+        }
+    }
+
+    if (currentTime === state.lastVideoTime && state.currentTimeNotChangedSince === -1) {
+        state.currentTimeNotChangedSince = now;
+    } else {
+        state.currentTimeNotChangedSince = -1;
+    }
+    state.lastVideoTime = currentTime;
+
+    if (elements.videoElement.buffered.length) {
+        const end = elements.videoElement.buffered.end(0);
+        const buffered = end - currentTime;
+
+        if ((end | 0) - currentTime > MAX_BUFFER) {
+            if (state.bigBufferSince === -1) {
+                state.bigBufferSince = now;
+            } else {
+                const time = now - state.bigBufferSince;
+                if (time > MAX_TIME_TO_RECOVER) {
+                    hasReasonToJump = true;
+                }
+            }
+        } else {
+            state.bigBufferSince = -1;
+        }
+
+        if (buffered < MAX_AHEAD) {
+            if (state.aheadOfBufferSince === -1) {
+                state.aheadOfBufferSince = now;
+            } else {
+                const time = now - state.aheadOfBufferSince;
+                if (time > MAX_TIME_TO_RECOVER) {
+                    hasReasonToJump = true;
+                }
+            }
+        } else {
+            state.aheadOfBufferSince = -1;
+        }
+
+        if (state.currentTimeNotChangedSince !== -1) {
+            const time = now - state.currentTimeNotChangedSince;
+            if (time > MAX_TIME_TO_RECOVER) {
+                hasReasonToJump = true;
+            }
+        }
+
+        if (!hasReasonToJump) return;
+
+        let waitingForSeekEnd = 0;
+        if (state.seekingSince !== -1) {
+            waitingForSeekEnd = now - state.seekingSince;
+            if (waitingForSeekEnd < MAX_SEEK_WAIT_MS) {
+                return;
+            }
+        }
+
+        const onSeekEnd = () => {
+            state.seekingSince = -1;
+            elements.videoElement.removeEventListener('seeked', onSeekEnd);
+            elements.videoElement.play().catch(e => console.warn("Autoplay prevented after seek:", e));
+        };
+
+        if (state.seekingSince !== -1) {
+            console.warn(`Attempt to seek while already seeking! ${waitingForSeekEnd}`);
+        }
+        state.seekingSince = now;
+        elements.videoElement.addEventListener('seeked', onSeekEnd);
+        elements.videoElement.currentTime = end;
+    }
+};
+
+// Audio Handling (Unchanged)
 const setupAudioPlayer = (codecId, metadata) => {
     if (codecId !== CODEC_IDS.AAC) {
         log(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
@@ -3681,228 +3842,7 @@ const handleAudioData = (arrayBuffer) => {
     }
 };
 
-// Video Handling
-const initVideoConverter = () => {
-    state.converter = new VideoConverter(elements.videoElement, parseInt(elements.maxFpsSelect.value), 1);
-    state.sourceBufferInternal = state.converter?.sourceBuffer || null;
-
-    elements.videoElement.addEventListener('loadedmetadata', () => {
-        if (state.isRunning && elements.videoPlaceholder.classList.contains('hidden')) {
-            elements.videoElement.play().catch(e => console.warn("Autoplay prevented:", e));
-        }
-    }, { once: true });
-
-    elements.videoElement.removeEventListener('error', onVideoError);
-    elements.videoElement.addEventListener('error', onVideoError);
-};
-
-const onVideoError = (e) => {
-    console.error('Video Element Error:', elements.videoElement.error);
-    log(`Video Error: ${elements.videoElement.error?.message} (Code: ${elements.videoElement.error?.code})`);
-};
-
-const cleanSourceBuffer = () => {
-    if (!state.sourceBufferInternal || state.sourceBufferInternal.updating || state.removeStart < 0 || state.removeEnd <= state.removeStart) {
-        if (state.sourceBufferInternal?.updating) {
-            setTimeout(cleanSourceBuffer, 50);
-        } else {
-            state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
-            state.removeStart = state.removeEnd = -1;
-        }
-        return;
-    }
-
-    try {
-        console.log(`[BufferCleaner] Removing buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
-        state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
-        state.sourceBufferInternal.addEventListener('updateend', () => {
-            console.log(`[BufferCleaner] Buffer range removed successfully`);
-            state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
-            state.removeStart = state.removeEnd = -1;
-        }, { once: true });
-    } catch (e) {
-        console.error(`[BufferCleaner] Failed to remove buffer: ${e}`);
-        state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
-        state.removeStart = state.removeEnd = -1;
-    }
-};
-
-const checkForIFrameAndCleanBuffer = (frameData) => {
-    if (!state.sourceBufferInternal) {
-        state.sourceBufferInternal = state.converter?.sourceBuffer || null;
-        if (!state.sourceBufferInternal) return;
-    }
-
-    if (isIFrame(frameData)) {
-        if (elements.videoElement.buffered && elements.videoElement.buffered.length > 0) {
-            const currentBufferStart = elements.videoElement.buffered.start(0);
-            const currentBufferEnd = elements.videoElement.buffered.end(elements.videoElement.buffered.length - 1);
-            const keepDuration = 10.0;
-            const targetRemoveEnd = Math.max(0, elements.videoElement.currentTime - keepDuration);
-
-            if (currentBufferStart < targetRemoveEnd - 1.0) {
-                const proposedStart = currentBufferStart;
-                const proposedEnd = targetRemoveEnd;
-
-                if (proposedEnd > proposedStart && !state.sourceBufferInternal.updating) {
-                    if (state.removeStart === -1) {
-                        console.log(`[BufferCleaner] IFrame detected. Scheduling cleanup: ${proposedStart.toFixed(3)} - ${proposedEnd.toFixed(3)}`);
-                        state.removeStart = proposedStart;
-                        state.removeEnd = proposedEnd;
-                        setTimeout(cleanSourceBuffer, 50);
-                    } else if (state.removeStart !== -1 && proposedEnd > state.removeEnd) {
-                        console.log(`[BufferCleaner] Extending cleanup range to ${proposedEnd.toFixed(3)}`);
-                        state.removeEnd = proposedEnd;
-                    }
-                }
-            }
-        }
-    }
-};
-
-// Video Playback Quality
-const getVideoPlaybackQuality = () => {
-    const video = elements.videoElement;
-    if (!video) return null;
-
-    const now = Date.now();
-    if (typeof video.getVideoPlaybackQuality === 'function') {
-        const quality = video.getVideoPlaybackQuality();
-        return { timestamp: now, decodedFrames: quality.totalVideoFrames, droppedFrames: quality.droppedVideoFrames };
-    }
-
-    if (typeof video.webkitDecodedFrameCount !== 'undefined') {
-        return { timestamp: now, decodedFrames: video.webkitDecodedFrameCount, droppedFrames: video.webkitDroppedFrameCount };
-    }
-    return null;
-};
-
-const calculateMomentumStats = () => {
-    const stat = getVideoPlaybackQuality();
-    if (!stat) return;
-
-    const timestamp = Date.now();
-    const oneSecondBefore = timestamp - 1000;
-    state.videoStats.push(stat);
-    state.videoStats = state.videoStats.filter(s => s.timestamp >= oneSecondBefore);
-    state.inputBytes = state.inputBytes.filter(b => b.timestamp >= oneSecondBefore);
-
-    const currentInputBytes = state.inputBytes.reduce((sum, item) => sum + item.bytes, 0);
-    const inputFrames = state.inputBytes.length;
-
-    if (state.videoStats.length) {
-        const oldest = state.videoStats[0];
-        state.momentumQualityStats = {
-            decodedFrames: stat.decodedFrames - oldest.decodedFrames,
-            droppedFrames: stat.droppedFrames - oldest.droppedFrames,
-            inputBytes: currentInputBytes,
-            inputFrames,
-            timestamp
-        };
-    } else {
-        state.momentumQualityStats = { decodedFrames: 0, droppedFrames: 0, inputBytes: currentInputBytes, inputFrames, timestamp };
-    }
-};
-
-const checkForBadState = () => {
-    if (!state.isRunning || !state.converter || elements.videoElement.readyState < elements.videoElement.HAVE_FUTURE_DATA) return;
-
-    const now = Date.now();
-    if (state.lastFrameReceived !== -1 && now - state.lastFrameReceived > PAUSE_DETECTION_THRESHOLD) {
-        log('Stream paused, skipping bad state check');
-        return;
-    }
-
-    calculateMomentumStats();
-    const { currentTime } = elements.videoElement;
-    let hasReasonToJump = false;
-    let reasonMessage = '';
-
-    if (state.momentumQualityStats && state.momentumQualityStats.decodedFrames <= 0 && state.momentumQualityStats.inputFrames > 0) {
-        state.noExceptionFramesSince = state.noExceptionFramesSince === -1 ? now : state.noExceptionFramesSince;
-        if (now - state.noExceptionFramesSince > MAX_TIME_TO_RECOVER) {
-            reasonMessage = `No frames decoded for ${now - state.noExceptionFramesSince} ms`;
-            hasReasonToJump = true;
-        }
-    } else {
-        state.noExceptionFramesSince = -1;
-    }
-
-    state.currentTimeNotChangedSince = Math.abs(currentTime - state.lastVideoTime) < 0.01 ?
-        (state.currentTimeNotChangedSince === -1 ? now : state.currentTimeNotChangedSince) : -1;
-    state.lastVideoTime = currentTime;
-
-    if (elements.videoElement.buffered.length) {
-        const bufferEnd = elements.videoElement.buffered.end(0);
-        const bufferedDuration = bufferEnd - currentTime;
-
-        if (bufferedDuration > MAX_BUFFER) {
-            state.bigBufferSince = state.bigBufferSince === -1 ? now : state.bigBufferSince;
-            if (now - state.bigBufferSince > MAX_TIME_TO_RECOVER) {
-                reasonMessage = reasonMessage || `Buffer ahead too large (${bufferedDuration.toFixed(3)}s > ${MAX_BUFFER}s) for ${now - state.bigBufferSince} ms`;
-                hasReasonToJump = true;
-            }
-        } else {
-            state.bigBufferSince = -1;
-        }
-
-        if (bufferedDuration < MAX_AHEAD) {
-            state.aheadOfBufferSince = state.aheadOfBufferSince === -1 ? now : state.aheadOfBufferSince;
-            if (now - state.aheadOfBufferSince > MAX_TIME_TO_RECOVER) {
-                reasonMessage = reasonMessage || `Playhead behind buffer (${bufferedDuration.toFixed(3)}s < ${MAX_AHEAD}s) for ${now - state.aheadOfBufferSince} ms`;
-                hasReasonToJump = true;
-            }
-        } else {
-            state.aheadOfBufferSince = -1;
-        }
-
-        if (state.currentTimeNotChangedSince !== -1 && now - state.currentTimeNotChangedSince > MAX_TIME_TO_RECOVER) {
-            reasonMessage = reasonMessage || `Video currentTime stuck at ${currentTime.toFixed(3)} for ${now - state.currentTimeNotChangedSince} ms`;
-            hasReasonToJump = true;
-        }
-
-        if (!hasReasonToJump) return;
-
-        let waitingForSeekEnd = 0;
-        if (state.seekingSince !== -1) {
-            waitingForSeekEnd = now - state.seekingSince;
-            if (waitingForSeekEnd < MAX_SEEK_WAIT_MS) {
-                console.log(`[StallRecovery] Skipping recovery, seek already in progress for ${waitingForSeekEnd}ms`);
-                return;
-            } else {
-                console.warn(`[StallRecovery] Previous seek seems stuck (${waitingForSeekEnd}ms). Forcing new seek`);
-                elements.videoElement.removeEventListener('seeked', onSeekEnd);
-            }
-        }
-
-        console.warn(`[StallRecovery] Attempting recovery: ${reasonMessage}. Jumping to buffered end: ${bufferEnd.toFixed(3)}`);
-        log(`Attempting playback recovery (${reasonMessage.split('.')[0]})`);
-
-        const onSeekEnd = () => {
-            console.log('[StallRecovery] Seek completed');
-            state.seekingSince = -1;
-            elements.videoElement.removeEventListener('seeked', onSeekEnd);
-            state.noExceptionFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
-            if (state.isRunning) {
-                elements.videoElement.play().catch(e => console.warn("Autoplay prevented after seek:", e));
-            }
-        };
-
-        state.seekingSince = now;
-        elements.videoElement.addEventListener('seeked', onSeekEnd);
-        try {
-            elements.videoElement.currentTime = bufferEnd > 0.1 ? bufferEnd - 0.05 : 0;
-        } catch (e) {
-            console.error(`[StallRecovery] Error setting currentTime: ${e}`);
-            elements.videoElement.removeEventListener('seeked', onSeekEnd);
-            state.seekingSince = -1;
-        }
-    } else {
-        state.noExceptionFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
-    }
-};
-
-// Coordinate Scaling Function
+// Coordinate Scaling Function (Unchanged)
 const getScaledCoordinates = (event) => {
     const video = elements.videoElement;
     const screenInfo = {
@@ -3950,7 +3890,7 @@ const getScaledCoordinates = (event) => {
     return { x: deviceX, y: deviceY };
 };
 
-// Control Message Sending
+// Control Message Sending (Unchanged)
 const sendControlMessage = (buffer) => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN && state.controlEnabledAtStart) {
         try {
@@ -3981,7 +3921,7 @@ const sendMouseEvent = (action, buttons, x, y) => {
     sendControlMessage(buffer);
 };
 
-// Mouse Event Handlers
+// Mouse Event Handlers (Unchanged)
 const handleMouseDown = (event) => {
     if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
     event.preventDefault();
@@ -4085,7 +4025,6 @@ const startStreaming = () => {
         audioDecoder: null,
         sourceBufferInternal: null,
         checkStateIntervalId: null,
-        fpsCheckIntervalId: null,
         currentTimeNotChangedSince: -1,
         bigBufferSince: -1,
         aheadOfBufferSince: -1,
@@ -4098,8 +4037,7 @@ const startStreaming = () => {
         videoStats: [],
         inputBytes: [],
         momentumQualityStats: null,
-        noExceptionFramesSince: -1,
-        frameTimestamps: [],
+        noDecodedFramesSince: -1,
         isMouseDown: false,
         currentMouseButtons: 0,
         lastMousePosition: { x: 0, y: 0 },
@@ -4109,7 +4047,6 @@ const startStreaming = () => {
         deviceHeight: 0,
         videoResolution: 'Unknown',
         isRunning: true,
-        lastFrameReceived: -1,
     });
 
     state.ws = new WebSocket(`ws://${window.location.hostname}:8080`);
@@ -4172,7 +4109,6 @@ const startStreaming = () => {
                             elements.flipOrientationBtn.disabled = false;
                             elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart);
                             state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
-                            state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL);
                         } else if (message.message === 'Streaming stopped') {
                             stopStreaming(false);
                         }
@@ -4206,14 +4142,8 @@ const startStreaming = () => {
 
             if (type === BINARY_TYPES.VIDEO && state.converter) {
                 state.inputBytes.push({ timestamp: Date.now(), bytes: payload.byteLength });
-                state.frameTimestamps.push(Date.now());
-                state.lastFrameReceived = Date.now();
+                state.converter.appendRawData(payloadUint8);
                 checkForIFrameAndCleanBuffer(payloadUint8);
-                try {
-                    state.converter.appendRawData(payloadUint8);
-                } catch (e) {
-                    console.error(`Error appending video data: ${e}`);
-                }
             } else if (type === BINARY_TYPES.AUDIO && elements.enableAudioInput.checked) {
                 handleAudioData(payload);
             }
@@ -4254,10 +4184,6 @@ const stopStreaming = (sendDisconnect = true) => {
         clearInterval(state.checkStateIntervalId);
         state.checkStateIntervalId = null;
     }
-    if (state.fpsCheckIntervalId) {
-        clearInterval(state.fpsCheckIntervalId);
-        state.fpsCheckIntervalId = null;
-    }
 
     if (state.audioDecoder) {
         state.audioDecoder.close();
@@ -4276,10 +4202,10 @@ const stopStreaming = (sendDisconnect = true) => {
         try {
             state.converter.appendRawData(new Uint8Array([]));
             state.converter.pause();
+            state.converter = null;
         } catch (e) {
             console.error("Error during converter cleanup:", e);
         }
-        state.converter = null;
     }
     state.sourceBufferInternal = null;
 
@@ -4320,19 +4246,17 @@ const stopStreaming = (sendDisconnect = true) => {
         videoStats: [],
         inputBytes: [],
         momentumQualityStats: null,
-        noExceptionFramesSince: -1,
-        frameTimestamps: [],
+        noDecodedFramesSince: -1,
         isMouseDown: false,
         currentMouseButtons: 0,
         lastMousePosition: { x: 0, y: 0 },
         deviceWidth: 0,
         deviceHeight: 0,
         videoResolution: 'Unknown',
-        lastFrameReceived: -1,
     });
 };
 
-// Event Listeners
+// Event Listeners (Unchanged)
 elements.startButton.addEventListener('click', startStreaming);
 elements.stopButton.addEventListener('click', () => stopStreaming(true));
 elements.themeToggle.addEventListener('click', () => {

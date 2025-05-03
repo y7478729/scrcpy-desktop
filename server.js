@@ -6,6 +6,7 @@ const { exec } = require('child_process');
 const adbkit = require('@devicefarmer/adbkit');
 const WebSocket = require('ws');
 const crypto = require('crypto');
+const { Worker } = require('worker_threads');
 
 const SERVER_PORT_BASE = 27183;
 const WEBSOCKET_PORT = 8080;
@@ -53,6 +54,7 @@ const adb = new adbkit.Client();
 const execPromise = util.promisify(exec);
 const sessions = new Map();
 const wsClients = new Map();
+const workers = new Map(); // Map<scid, Worker>
 
 const SAMPLE_RATE_MAP = {
     0: 96000, 1: 88200, 2: 64000, 3: 48000, 4: 44100, 5: 32000,
@@ -148,9 +150,13 @@ function createWebSocketServer() {
                 if (client.session) {
                     const session = sessions.get(client.session);
                     if (session?.controlSocket && !session.controlSocket.destroyed) {
-                        log(LogLevel.DEBUG, `[Control Send] Forwarding ${data.length} bytes to CONTROL socket ${session.controlSocket.remoteId}`);
-                        try { session.controlSocket.write(data); }
-                        catch (e) { log(LogLevel.ERROR, `[Control Send Error] SCID ${client.session}: ${e.message}`); }
+                        const worker = workers.get(client.session);
+                        if (worker) {
+                            log(LogLevel.DEBUG, `[Control Send] Forwarding ${data.length} bytes to worker for SCID ${client.session}`);
+                            worker.postMessage({ type: 'controlData', data: Buffer.from(data).toString('base64'), scid: client.session, clientId });
+                        } else {
+                            log(LogLevel.WARN, `[Control Send] No worker for SCID ${client.session}`);
+                        }
                     } else if (session?.options?.control === 'true') {
                         log(LogLevel.WARN, `[Control Send] Cannot forward: Control socket for SCID ${client.session} not assigned/destroyed.`);
                     }
@@ -174,13 +180,14 @@ function createWebSocketServer() {
                 }
             }
         });
+
         ws.on('close', (code, reason) => {
             log(LogLevel.INFO, `[WebSocket] Client disconnected: ${clientId} (Code: ${code}, Reason: ${reason?.toString()})`);
             handleDisconnect(clientId);
         });
         ws.on('error', (error) => {
-             log(LogLevel.ERROR, `[WebSocket] Error for client ${clientId}: ${error.message}`);
-             handleDisconnect(clientId);
+            log(LogLevel.ERROR, `[WebSocket] Error for client ${clientId}: ${error.message}`);
+            handleDisconnect(clientId);
         });
     });
     log(LogLevel.INFO, `[System] WebSocket server listening on port ${WEBSOCKET_PORT}`);
@@ -364,6 +371,13 @@ async function cleanupSession(scid) {
     if (processStream && !processStream.killed) { processStream.kill('SIGKILL'); log(LogLevel.INFO, `[Cleanup ${scid}] Killed scrcpy-server process.`); }
     if (tcpServer) { await new Promise(resolve => tcpServer.close(resolve)); log(LogLevel.INFO, `[Cleanup ${scid}] TCP server closed.`); }
 
+    const worker = workers.get(scid);
+    if (worker) {
+        worker.postMessage({ type: 'stop' });
+        workers.delete(scid);
+        log(LogLevel.INFO, `[Cleanup ${scid}] Worker terminated.`);
+    }
+
     const client = wsClients.get(clientId);
     if (client) {
         if (client.session === scid) client.session = null;
@@ -409,17 +423,17 @@ function createTcpServer(scid) {
             log(LogLevel.INFO, `[TCP Socket ${remoteId} (${socket.type})] Ended.`);
             clearSocketReference(scid, socket);
             sessions.get(scid)?.unidentifiedSockets?.delete(remoteId);
-         });
+        });
         socket.on('close', (hadError) => {
-             log(LogLevel.INFO, `[TCP Socket ${remoteId} (${socket.type})] Closed (Error: ${hadError}).`);
-             clearSocketReference(scid, socket);
-             sessions.get(scid)?.unidentifiedSockets?.delete(remoteId);
+            log(LogLevel.INFO, `[TCP Socket ${remoteId} (${socket.type})] Closed (Error: ${hadError}).`);
+            clearSocketReference(scid, socket);
+            sessions.get(scid)?.unidentifiedSockets?.delete(remoteId);
         });
         socket.on('error', (err) => {
-             log(LogLevel.ERROR, `[TCP Socket ${remoteId} (${socket.type})] Error: ${err.message}`);
-             clearSocketReference(scid, socket);
-             sessions.get(scid)?.unidentifiedSockets?.delete(remoteId);
-             socket.destroy();
+            log(LogLevel.ERROR, `[TCP Socket ${remoteId} (${socket.type})] Error: ${err.message}`);
+            clearSocketReference(scid, socket);
+            sessions.get(scid)?.unidentifiedSockets?.delete(remoteId);
+            socket.destroy();
         });
 
         const client = session ? wsClients.get(session.clientId) : null;
@@ -441,14 +455,14 @@ function clearSocketReference(scid, socket) {
     const session = sessions.get(scid);
     if (!session) return;
     let clearedType = 'unknown';
-    if (session.videoSocket === socket) { session.videoSocket = null; clearedType = 'video';}
+    if (session.videoSocket === socket) { session.videoSocket = null; clearedType = 'video'; }
     else if (session.audioSocket === socket) { session.audioSocket = null; clearedType = 'audio'; }
-    else if (session.controlSocket === socket) { session.controlSocket = null; clearedType = 'control';}
+    else if (session.controlSocket === socket) { session.controlSocket = null; clearedType = 'control'; }
 
     log(LogLevel.DEBUG, `[Session ${scid}] Cleared reference for socket ${socket.remoteId} (${clearedType})`);
     if (!session.videoSocket && !session.audioSocket && !session.controlSocket && session.processStream) {
-         log(LogLevel.INFO, `[Session ${scid}] All stream sockets closed/cleared. Triggering cleanup.`);
-         cleanupSession(scid);
+        log(LogLevel.INFO, `[Session ${scid}] All stream sockets closed/cleared. Triggering cleanup.`);
+        cleanupSession(scid);
     }
 }
 
@@ -537,13 +551,44 @@ function attemptIdentifyControlByDeduction(session, client) {
         remainingSocket.type = 'control';
         remainingSocket.state = 'STREAMING';
         session.unidentifiedSockets.delete(remainingSocketId);
+
+		const worker = new Worker(path.join(__dirname, 'serverControlWorker.js'), {
+			workerData: { scid: session.scid, clientId: session.clientId, CURRENT_LOG_LEVEL }
+		});
+        workers.set(session.scid, worker);
+
+        worker.on('message', (msg) => {
+            if (msg.type === 'writeToSocket') {
+                const session = sessions.get(msg.scid);
+                if (session?.controlSocket && !session.controlSocket.destroyed) {
+                    try {
+                        session.controlSocket.write(Buffer.from(msg.data, 'base64'));
+                        log(LogLevel.DEBUG, `[Worker ${msg.scid}] Wrote ${msg.data.length} bytes to control socket`);
+                    } catch (e) {
+                        log(LogLevel.ERROR, `[Worker ${msg.scid}] Control socket write error: ${e.message}`);
+                        client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${e.message}` }));
+                    }
+                }
+            } else if (msg.type === 'error') {
+                log(LogLevel.ERROR, `[Worker ${msg.scid}] Control processing error: ${msg.error}`);
+                client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${msg.error}` }));
+            }
+        });
+
+        worker.on('error', (err) => {
+            log(LogLevel.ERROR, `[Worker ${session.scid}] Worker error: ${err.message}`);
+            workers.delete(session.scid);
+        });
+
+        worker.on('exit', (code) => {
+            log(LogLevel.INFO, `[Worker ${session.scid}] Worker exited with code ${code}`);
+            workers.delete(session.scid);
+        });
+
         checkAndSendStreamingStarted(session, client);
 
         if (remainingSocket.dynamicBuffer.length > 0) {
-             const controlClient = session ? wsClients.get(session.clientId) : null;
-             if (controlClient) {
-                processSingleSocket(remainingSocket, controlClient, session);
-             }
+            processSingleSocket(remainingSocket, client, session);
         }
     }
 }
@@ -609,7 +654,7 @@ function processSingleSocket(socket, client, session) {
                             processedSomething = true;
                             keepProcessing = true;
                         } else {
-                             log(LogLevel.WARN, `[ProcessSingleSocket ${socket.remoteId}] Expected VIDEO socket, but received non-video metadata (0x${potentialCodecId.toString(16)}). Buffer length: ${dynBuffer.length}`);
+                            log(LogLevel.WARN, `[ProcessSingleSocket ${socket.remoteId}] Expected VIDEO socket, but received non-video metadata (0x${potentialCodecId.toString(16)}). Buffer length: ${dynBuffer.length}`);
                         }
                     }
                 }
@@ -617,7 +662,7 @@ function processSingleSocket(socket, client, session) {
                 if (!identifiedThisPass && !session.audioSocket && session.expectedSockets.includes('audio')) {
                     if (dynBuffer.length >= AUDIO_METADATA_LENGTH) {
                         const potentialCodecId = dynBuffer.buffer.readUInt32BE(0);
-                         if (CODEC_SOCKET_TYPES[potentialCodecId] === 'audio') {
+                        if (CODEC_SOCKET_TYPES[potentialCodecId] === 'audio') {
                             log(LogLevel.INFO, `[Session ${session.scid}] Identified AUDIO socket ${socket.remoteId} (Codec: 0x${potentialCodecId.toString(16)})`);
                             session.audioSocket = socket;
                             socket.type = 'audio';
@@ -644,6 +689,41 @@ function processSingleSocket(socket, client, session) {
                     identifiedThisPass = true;
                     session.unidentifiedSockets?.delete(socket.remoteId);
                     socket.state = 'STREAMING';
+
+                    // Initialize worker thread for control messages
+                    const worker = new Worker(path.join(__dirname, 'controlWorker.js'), {
+                        workerData: { scid: session.scid, clientId: session.clientId }
+                    });
+                    workers.set(session.scid, worker);
+
+                    worker.on('message', (msg) => {
+                        if (msg.type === 'writeToSocket') {
+                            const session = sessions.get(msg.scid);
+                            if (session?.controlSocket && !session.controlSocket.destroyed) {
+                                try {
+                                    session.controlSocket.write(Buffer.from(msg.data, 'base64'));
+                                    log(LogLevel.DEBUG, `[Worker ${msg.scid}] Wrote ${msg.data.length} bytes to control socket`);
+                                } catch (e) {
+                                    log(LogLevel.ERROR, `[Worker ${msg.scid}] Control socket write error: ${e.message}`);
+                                    client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${e.message}` }));
+                                }
+                            }
+                        } else if (msg.type === 'error') {
+                            log(LogLevel.ERROR, `[Worker ${msg.scid}] Control processing error: ${msg.error}`);
+                            client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${msg.error}` }));
+                        }
+                    });
+
+                    worker.on('error', (err) => {
+                        log(LogLevel.ERROR, `[Worker ${session.scid}] Worker error: ${err.message}`);
+                        workers.delete(session.scid);
+                    });
+
+                    worker.on('exit', (code) => {
+                        log(LogLevel.INFO, `[Worker ${session.scid}] Worker exited with code ${code}`);
+                        workers.delete(session.scid);
+                    });
+
                     checkAndSendStreamingStarted(session, client);
                     processedSomething = true;
                     keepProcessing = true;
@@ -652,13 +732,13 @@ function processSingleSocket(socket, client, session) {
                 if (identifiedThisPass) {
                     attemptIdentifyControlByDeduction(session, client);
                 } else {
-                     attemptIdentifyControlByDeduction(session, client);
-                     if(!session.controlSocket && session.expectedSockets.includes('control')) {
-                       log(LogLevel.DEBUG, `[ProcessSingleSocket ${socket.remoteId}] Identification still pending in AWAITING_METADATA.`);
-                       keepProcessing = false;
-                     } else {
+                    attemptIdentifyControlByDeduction(session, client);
+                    if (!session.controlSocket && session.expectedSockets.includes('control')) {
+                        log(LogLevel.DEBUG, `[ProcessSingleSocket ${socket.remoteId}] Identification still pending in AWAITING_METADATA.`);
+                        keepProcessing = false;
+                    } else {
                         keepProcessing = dynBuffer.length > 0;
-                     }
+                    }
                 }
                 break;
 
@@ -723,9 +803,9 @@ function processSingleSocket(socket, client, session) {
                     if (dynBuffer.length > 0) {
                         log(LogLevel.DEBUG, `[Streaming ${socket.remoteId} - Control] Forwarding ${dynBuffer.length} bytes from device to WS Client ${session.clientId}`);
                         client.ws.send(JSON.stringify({
-                           type: MESSAGE_TYPES.DEVICE_MESSAGE,
-                           data: dynBuffer.buffer.subarray(0, dynBuffer.length).toString('base64')
-                         }));
+                            type: MESSAGE_TYPES.DEVICE_MESSAGE,
+                            data: dynBuffer.buffer.subarray(0, dynBuffer.length).toString('base64')
+                        }));
                         dynBuffer.length = 0;
                         processedSomething = true;
                     }
@@ -747,9 +827,9 @@ async function gracefulShutdown(wss, httpServer) {
     log(LogLevel.INFO, `[Shutdown] Cleaning up ${activeSessions.length} active session(s)...`);
     for (const [clientId, client] of wsClients) {
         if (client.ws?.readyState === WebSocket.OPEN || client.ws?.readyState === WebSocket.CONNECTING) {
-             client.ws.close(1001, 'Server Shutting Down');
+            client.ws.close(1001, 'Server Shutting Down');
         }
-     }
+    }
     wsClients.clear();
     await Promise.allSettled(activeSessions.map(scid => cleanupSession(scid)));
     const closeWss = new Promise(resolve => wss.close(resolve));
