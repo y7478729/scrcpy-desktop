@@ -20,7 +20,7 @@ const CURRENT_LOG_LEVEL = LogLevel.INFO;
 const BASE_SCRCPY_OPTIONS = {
     log_level: CURRENT_LOG_LEVEL === LogLevel.DEBUG ? 'debug' : 'info',
     video_codec: 'h264',
-    audio_codec: 'raw',
+    audio_codec: 'aac',
 };
 
 const DEVICE_NAME_LENGTH = 64;
@@ -35,8 +35,7 @@ const MESSAGE_TYPES = {
 const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
 
 const CODEC_IDS = {
-    H264: 0x68323634, H265: 0x68323635, AV1: 0x00617631,
-    OPUS: 0x6f707573, AAC: 0x00616163, RAW: 0x00726177,
+    H264: 0x68323634, AAC: 0x00616163,
 };
 
 const CODEC_METADATA_LENGTHS = {
@@ -55,12 +54,81 @@ const execPromise = util.promisify(exec);
 const sessions = new Map();
 const wsClients = new Map();
 
+const SAMPLE_RATE_MAP = {
+    0: 96000, 1: 88200, 2: 64000, 3: 48000, 4: 44100, 5: 32000,
+    6: 24000, 7: 22050, 8: 16000, 9: 12000, 10: 11025, 11: 8000,
+    12: 7350, 13: 0, 14: 0, 15: 0
+};
+
+const PROFILE_MAP = {
+    2: 1, // AAC-LC
+    5: 4, // HE-AAC (SBR)
+    29: 28, // HE-AAC v2 (PS)
+};
+
 function log(level, message, ...args) {
     if (level >= CURRENT_LOG_LEVEL) {
         const levelStr = Object.keys(LogLevel).find(key => LogLevel[key] === level);
         const timestamp = new Date().toISOString();
         console.log(`[${timestamp}] [${levelStr}]`, message, ...args);
     }
+}
+
+function parseAudioSpecificConfig(buffer) {
+    let offset = 0;
+    let bits = 0;
+    let bitCount = 0;
+
+    function readBits(numBits) {
+        while (bitCount < numBits) {
+            bits = (bits << 8) | buffer[offset++];
+            bitCount += 8;
+        }
+        bitCount -= numBits;
+        const result = (bits >> bitCount) & ((1 << numBits) - 1);
+        bits &= (1 << bitCount) - 1;
+        return result;
+    }
+
+    const objectType = readBits(5);
+    let sampleRateIndex = readBits(4);
+    let sampleRate = SAMPLE_RATE_MAP[sampleRateIndex];
+    if (sampleRateIndex === 15) {
+        sampleRate = readBits(24);
+    }
+    const channelConfig = readBits(4);
+
+    if (!PROFILE_MAP[objectType]) {
+        throw new Error(`Unsupported AAC object type: ${objectType}`);
+    }
+    if (!sampleRate) {
+        throw new Error(`Unsupported sample rate index: ${sampleRateIndex}`);
+    }
+    if (channelConfig < 1 || channelConfig > 7) {
+        throw new Error(`Unsupported channel configuration: ${channelConfig}`);
+    }
+
+    return {
+        profile: PROFILE_MAP[objectType],
+        sampleRateIndex,
+        sampleRate,
+        channelConfig,
+    };
+}
+
+function createAdtsHeader(aacFrameLength, metadata) {
+    const { profile, sampleRateIndex, channelConfig } = metadata;
+    const frameLength = 7 + aacFrameLength;
+
+    const header = Buffer.alloc(7);
+    header[0] = 0xFF; // Syncword
+    header[1] = 0xF9; // Syncword, ID=0 (MPEG-4), Layer=00, Protection=1
+    header[2] = (profile << 6) | (sampleRateIndex << 2) | ((channelConfig >> 2) & 0x1);
+    header[3] = ((channelConfig & 0x3) << 6) | ((frameLength >> 11) & 0x3);
+    header[4] = (frameLength >> 3) & 0xFF;
+    header[5] = ((frameLength & 0x7) << 5) | 0x1F;
+    header[6] = 0xFC; // Buffer Fullness, 1 frame
+    return header;
 }
 
 function createWebSocketServer() {
@@ -201,6 +269,7 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         deviceNameReceived: false, expectedSockets: [], socketsConnected: 0,
         streamingStartedNotified: false,
         unidentifiedSockets: new Map(),
+        audioMetadata: null,
     };
     if (runOptions.video === 'true') session.expectedSockets.push('video');
     if (runOptions.audio === 'true') session.expectedSockets.push('audio');
@@ -484,6 +553,10 @@ function processSingleSocket(socket, client, session) {
     let processedSomething = false;
     let keepProcessing = true;
 
+    if (!socket.codecProcessed) {
+        socket.codecProcessed = false;
+    }
+
     while (keepProcessing && !socket.destroyed && socket.state !== 'UNKNOWN') {
         keepProcessing = false;
         log(LogLevel.DEBUG, `[ProcessSingleSocket ${socket.remoteId}] State: ${socket.state}, Buffer: ${dynBuffer.length} bytes, Type: ${socket.type}`);
@@ -548,6 +621,7 @@ function processSingleSocket(socket, client, session) {
                             log(LogLevel.INFO, `[Session ${session.scid}] Identified AUDIO socket ${socket.remoteId} (Codec: 0x${potentialCodecId.toString(16)})`);
                             session.audioSocket = socket;
                             socket.type = 'audio';
+                            socket.codecProcessed = true;
                             identifiedThisPass = true;
                             session.unidentifiedSockets?.delete(socket.remoteId);
                             client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.AUDIO_INFO, codecId: potentialCodecId }));
@@ -591,7 +665,7 @@ function processSingleSocket(socket, client, session) {
             case 'STREAMING':
                 if (!socket.type || socket.type === 'unknown') { log(LogLevel.WARN, `[Streaming ${socket.remoteId}] Socket in STREAMING state but type unknown? Resetting.`); socket.state = 'AWAITING_METADATA'; keepProcessing = true; break; }
 
-                if (socket.type === 'video' || socket.type === 'audio') {
+                if (socket.type === 'video') {
                     if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
                         const packetSize = dynBuffer.buffer.readUInt32BE(8);
                         if (packetSize > 10 * 1024 * 1024 || packetSize < 0) { log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`); socket.state = 'UNKNOWN'; socket.destroy(); return; }
@@ -599,9 +673,46 @@ function processSingleSocket(socket, client, session) {
                         if (dynBuffer.length >= totalPacketLength) {
                             const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
                             const typeBuffer = Buffer.alloc(1);
-                            typeBuffer.writeUInt8(socket.type === 'video' ? BINARY_TYPES.VIDEO : BINARY_TYPES.AUDIO, 0);
-                            log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending ${socket.type} packet (${payload.length} bytes)`);
+                            typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
+                            log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending video packet (${payload.length} bytes)`);
                             client.ws.send(Buffer.concat([typeBuffer, payload]), { binary: true });
+                            dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
+                            dynBuffer.length -= totalPacketLength;
+                            processedSomething = true;
+                            keepProcessing = true;
+                        } else { log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`); keepProcessing = false; }
+                    } else { log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`); keepProcessing = false; }
+                } else if (socket.type === 'audio') {
+                    if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
+                        const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
+                        const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
+                        const packetSize = dynBuffer.buffer.readUInt32BE(8);
+                        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) { log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`); socket.state = 'UNKNOWN'; socket.destroy(); return; }
+                        const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
+                        if (dynBuffer.length >= totalPacketLength) {
+                            const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
+
+                            if (configFlag && !session.audioMetadata) {
+                                try {
+                                    session.audioMetadata = parseAudioSpecificConfig(payload);
+                                    log(LogLevel.INFO, `[Session ${session.scid}] AAC Metadata: ${JSON.stringify(session.audioMetadata)}`);
+                                    client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.AUDIO_INFO, codecId: CODEC_IDS.AAC, metadata: session.audioMetadata }));
+                                } catch (e) {
+                                    log(LogLevel.ERROR, `[Session ${session.scid}] Failed to parse ASC: ${e.message}`);
+                                    socket.destroy();
+                                    return;
+                                }
+                            }
+
+                            if (!configFlag && session.audioMetadata) {
+                                const adtsHeader = createAdtsHeader(payload.length, session.audioMetadata);
+                                const adtsFrame = Buffer.concat([adtsHeader, payload]);
+                                const typeBuffer = Buffer.alloc(1);
+                                typeBuffer.writeUInt8(BINARY_TYPES.AUDIO, 0);
+                                log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending audio packet (${adtsFrame.length} bytes, PTS: ${pts})`);
+                                client.ws.send(Buffer.concat([typeBuffer, adtsFrame]), { binary: true });
+                            }
+
                             dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
                             dynBuffer.length -= totalPacketLength;
                             processedSomething = true;
@@ -629,7 +740,6 @@ function processSingleSocket(socket, client, session) {
         }
     }
 }
-
 
 async function gracefulShutdown(wss, httpServer) {
     log(LogLevel.INFO, '\n[Shutdown] Received signal. Shutting down gracefully...');

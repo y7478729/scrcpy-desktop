@@ -1,5 +1,5 @@
-import VideoConverter from 'h264-converter';
-import { setLogger } from 'h264-converter';
+const VideoConverter = require('h264-converter').default;
+const { setLogger } = require('h264-converter');
 
 setLogger(() => {}, console.error);
 
@@ -7,16 +7,13 @@ setLogger(() => {}, console.error);
 const CHECK_STATE_INTERVAL_MS = 250;
 const MAX_SEEK_WAIT_MS = 1500;
 const MAX_TIME_TO_RECOVER = 200;
-const MAX_AUDIO_QUEUE_SIZE = 10;
-const AUDIO_SAMPLE_RATE = 48000;
-const AUDIO_CHANNELS = 2;
 const AUDIO_BYTES_PER_SAMPLE = 2;
-const AUDIO_SAMPLE_SIZE = AUDIO_CHANNELS * AUDIO_BYTES_PER_SAMPLE;
 const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
-const CODEC_IDS = { H264: 0x68323634, RAW: 0x00726177 };
+const CODEC_IDS = { H264: 0x68323634, AAC: 0x00616163 };
 const NALU_TYPE_IDR = 5;
 const FPS_CHECK_INTERVAL = 10000;
 const TARGET_FPS_VALUES = [30, 50, 60, 120];
+const PAUSE_DETECTION_THRESHOLD = 1000;
 
 // Constants (Control)
 const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
@@ -26,7 +23,7 @@ const AMOTION_EVENT_ACTION_MOVE = 2;
 const AMOTION_EVENT_BUTTON_PRIMARY = 1;
 const AMOTION_EVENT_BUTTON_SECONDARY = 2;
 const AMOTION_EVENT_BUTTON_TERTIARY = 4;
-const POINTER_ID_MOUSE = -1n; // BigInt for 64-bit value
+const POINTER_ID_MOUSE = -1n;
 
 // Browser-specific settings
 const IS_SAFARI = !!window.safari;
@@ -50,8 +47,8 @@ const elements = {
     streamArea: document.getElementById('streamArea'),
     videoPlaceholder: document.getElementById('videoPlaceholder'),
     videoElement: document.getElementById('screen'),
-    videoBorder: document.getElementById('videoBorder'), // <-- ADD THIS
-    flipOrientationBtn: document.getElementById('flipOrientationBtn'), // <-- ADD THIS
+    videoBorder: document.getElementById('videoBorder'),
+    flipOrientationBtn: document.getElementById('flipOrientationBtn'),
 };
 
 // State
@@ -60,9 +57,9 @@ let state = {
     converter: null,
     isRunning: false,
     audioContext: null,
-    audioBufferQueue: [],
-    nextAudioTime: 0,
+    audioDecoder: null,
     audioCodecId: null,
+    audioMetadata: null,
     receivedFirstAudioPacket: false,
     deviceWidth: 0,
     deviceHeight: 0,
@@ -84,7 +81,10 @@ let state = {
     controlEnabledAtStart: false,
     isMouseDown: false,
     currentMouseButtons: 0,
-    lastMousePosition: { x: 0, y: 0 }
+    lastMousePosition: { x: 0, y: 0 },
+    nextAudioTime: 0,
+    totalAudioFrames: 0,
+    lastFrameReceived: -1,
 };
 
 // Utility Functions
@@ -122,37 +122,26 @@ const updateVideoBorder = () => {
     let renderedVideoWidth, renderedVideoHeight;
     let offsetX = 0, offsetY = 0;
 
-    // Calculate the actual rendered video dimensions based on object-fit: contain
     if (elementAspectRatio > videoAspectRatio) {
-        // Element is wider than video (letterbox top/bottom or pillarbox if width was constrained)
-        // In 'contain' mode, height determines size
         renderedVideoHeight = elementHeight;
         renderedVideoWidth = elementHeight * videoAspectRatio;
         offsetX = (elementWidth - renderedVideoWidth) / 2;
     } else {
-        // Element is taller than video (pillarbox left/right or letterbox if height was constrained)
-        // In 'contain' mode, width determines size
         renderedVideoWidth = elementWidth;
         renderedVideoHeight = elementWidth / videoAspectRatio;
         offsetY = (elementHeight - renderedVideoHeight) / 2;
     }
 
-    // Calculate position relative to the container (#streamArea)
-    // video.offsetLeft/Top gives position of video element *within* its offset parent (should be streamArea)
     const borderLeft = video.offsetLeft + offsetX;
     const borderTop = video.offsetTop + offsetY;
 
-    // Apply styles
     border.style.left = `${borderLeft}px`;
     border.style.top = `${borderTop}px`;
-    // Subtract border width * 2 from dimensions to keep border *around* the content area
-    // Adjust '3' if you change the border width in CSS
     const borderWidth = 3;
     border.style.width = `${renderedVideoWidth}px`;
     border.style.height = `${renderedVideoHeight}px`;
     border.style.display = 'block';
 };
-
 
 const isIFrame = (frameData) => {
     if (!frameData || frameData.length < 1) return false;
@@ -177,6 +166,12 @@ const calculateAverageFPS = () => {
 };
 
 const checkAndUpdateFPS = () => {
+    const now = Date.now();
+    if (state.lastFrameReceived !== -1 && now - state.lastFrameReceived > PAUSE_DETECTION_THRESHOLD) {
+        log('Stream paused, skipping FPS check');
+        return;
+    }
+
     const calculatedFPS = calculateAverageFPS();
     const currentFPS = parseInt(elements.maxFpsSelect.value);
 
@@ -197,97 +192,106 @@ const reinitializeConverter = (newFPS) => {
         }
         log('Restarting stream with new FPS');
         startStreaming();
-    }, 2000);
+    }, 100);
 };
 
 // Audio Handling
-const setupAudioPlayer = (codecId) => {
-    if (codecId !== CODEC_IDS.RAW) {
+const setupAudioPlayer = (codecId, metadata) => {
+    if (codecId !== CODEC_IDS.AAC) {
         log(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
         return;
     }
-    if (!window.AudioContext && !window.webkitAudioContext) {
-        log('Web Audio API not supported');
+    if (!window.AudioContext || !window.AudioDecoder) {
+        updateStatus('Audio not supported in this browser');
         return;
     }
 
-    if (state.audioContext && state.audioContext.state !== 'closed') {
-        state.audioContext.close().catch(e => console.error(`Error closing previous AudioContext: ${e}`));
-    }
-
     try {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        state.audioContext = new AudioContext({ latencyHint: 'interactive', sampleRate: AUDIO_SAMPLE_RATE });
-        state.audioBufferQueue = [];
-        state.nextAudioTime = 0;
-        state.receivedFirstAudioPacket = false;
+        state.audioContext = new AudioContext({
+            sampleRate: metadata.sampleRate || 48000,
+        });
+
+        state.audioDecoder = new AudioDecoder({
+            output: (audioData) => {
+                try {
+                    const numberOfChannels = audioData.numberOfChannels;
+                    const sampleRate = audioData.sampleRate;
+                    const bufferLength = Math.max(audioData.numberOfFrames, 8192);
+                    const buffer = state.audioContext.createBuffer(
+                        numberOfChannels,
+                        bufferLength,
+                        sampleRate
+                    );
+
+                    const isInterleaved = audioData.format === 'f32' || audioData.format === 'f32-interleaved';
+                    if (isInterleaved) {
+                        const interleavedData = new Float32Array(audioData.numberOfFrames * numberOfChannels);
+                        audioData.copyTo(interleavedData, { planeIndex: 0 });
+
+                        for (let channel = 0; channel < numberOfChannels; channel++) {
+                            const channelData = buffer.getChannelData(channel);
+                            for (let i = 0; i < audioData.numberOfFrames; i++) {
+                                channelData[i] = interleavedData[i * numberOfChannels + channel];
+                            }
+                        }
+                    } else {
+                        for (let channel = 0; channel < numberOfChannels; channel++) {
+                            audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
+                        }
+                    }
+
+                    const source = state.audioContext.createBufferSource();
+                    source.buffer = buffer;
+                    source.connect(state.audioContext.destination);
+                    const currentTime = state.audioContext.currentTime;
+                    const bufferDuration = audioData.numberOfFrames / sampleRate;
+                    state.nextAudioTime = Math.max(state.nextAudioTime, currentTime);
+                    source.start(state.nextAudioTime);
+                    state.nextAudioTime += bufferDuration;
+                } catch (e) {
+                    console.error(`Error processing decoded audio: ${e}`);
+                }
+            },
+            error: (error) => {
+                console.error(`AudioDecoder error: ${error}`);
+            },
+        });
+
+        state.audioDecoder.configure({
+            codec: 'mp4a.40.2',
+            sampleRate: metadata.sampleRate || 48000,
+            numberOfChannels: metadata.channelConfig || 2,
+        });
+
         state.audioCodecId = codecId;
-        log('Audio player setup for RAW audio');
+        state.audioMetadata = metadata;
+        state.receivedFirstAudioPacket = false;
+        state.nextAudioTime = 0;
+        state.totalAudioFrames = 0;
     } catch (e) {
-        log(`Failed to create AudioContext: ${e}`);
+        log(`Failed to setup AudioDecoder: ${e}`);
+        state.audioDecoder = null;
         state.audioContext = null;
+        updateStatus('Failed to initialize audio');
     }
 };
 
 const handleAudioData = (arrayBuffer) => {
-    if (!state.audioContext || !state.isRunning || state.audioCodecId !== CODEC_IDS.RAW || arrayBuffer.byteLength === 0) return;
-    if (arrayBuffer.byteLength % AUDIO_SAMPLE_SIZE !== 0) {
-        console.warn(`Invalid audio data length: ${arrayBuffer.byteLength} bytes`);
-        return;
-    }
+    if (!state.audioDecoder || !state.isRunning || state.audioCodecId !== CODEC_IDS.AAC || arrayBuffer.byteLength === 0) return;
 
-    const frameCount = arrayBuffer.byteLength / AUDIO_SAMPLE_SIZE;
     try {
-        const audioBuffer = state.audioContext.createBuffer(AUDIO_CHANNELS, frameCount, AUDIO_SAMPLE_RATE);
-        const float32Data = new Float32Array(frameCount);
-        const int16Data = new Int16Array(arrayBuffer);
-        for (let channel = 0; channel < AUDIO_CHANNELS; channel++) {
-            for (let i = 0; i < frameCount; i++) {
-                float32Data[i] = int16Data[i * AUDIO_CHANNELS + channel] / 32768.0;
-            }
-            audioBuffer.copyToChannel(float32Data, channel);
-        }
-        playAudioBuffer(audioBuffer);
-    } catch (e) {
-        console.error(`Error processing audio: ${e}`);
-    }
-};
-
-const playAudioBuffer = (buffer) => {
-    if (!state.audioContext || state.audioContext.state === 'closed') return;
-    if (state.audioContext.state === 'suspended') {
-        state.audioContext.resume().catch(e => console.error(`Audio context resume error: ${e}`));
-    }
-
-    if (state.audioBufferQueue.length >= MAX_AUDIO_QUEUE_SIZE) {
-        const oldSource = state.audioBufferQueue.shift();
-        try { oldSource.stop(0); oldSource.disconnect(); } catch (e) {}
-    }
-
-    if (!state.receivedFirstAudioPacket) {
-        state.nextAudioTime = state.audioContext.currentTime + 0.05;
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const sampleRate = state.audioMetadata?.sampleRate || 48000;
+        const frameDuration = 1024 / sampleRate * 1000000;
+        state.audioDecoder.decode(new EncodedAudioChunk({
+            type: 'key',
+            timestamp: state.totalAudioFrames * frameDuration,
+            data: uint8Array,
+        }));
+        state.totalAudioFrames += 1024;
         state.receivedFirstAudioPacket = true;
-    }
-
-    try {
-        const source = state.audioContext.createBufferSource();
-        source.buffer = buffer;
-        source.connect(state.audioContext.destination);
-        const startTime = Math.max(state.audioContext.currentTime, state.nextAudioTime);
-        source.start(startTime);
-        state.nextAudioTime = startTime + buffer.duration;
-        state.audioBufferQueue.push(source);
-
-        source.onended = () => {
-            const index = state.audioBufferQueue.indexOf(source);
-            if (index > -1) state.audioBufferQueue.splice(index, 1);
-            try { source.disconnect(); } catch (e) {}
-        };
     } catch (e) {
-        console.error(`Error playing audio buffer: ${e}`);
-        if (e.name === 'InvalidStateError' && state.audioContext.state === 'closed') {
-            state.audioContext = null;
-        }
+        console.error(`Error decoding audio data: ${e}`);
     }
 };
 
@@ -326,12 +330,12 @@ const cleanSourceBuffer = () => {
         console.log(`[BufferCleaner] Removing buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
         state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
         state.sourceBufferInternal.addEventListener('updateend', () => {
-            console.log(`[BufferCleaner] Buffer range removed successfully.`);
+            console.log(`[BufferCleaner] Buffer range removed successfully`);
             state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
             state.removeStart = state.removeEnd = -1;
         }, { once: true });
     } catch (e) {
-        console.error(`[BufferCleaner] Failed to remove buffer: ${e}`, `Range: ${state.removeStart}-${state.removeEnd}`);
+        console.error(`[BufferCleaner] Failed to remove buffer: ${e}`);
         state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
         state.removeStart = state.removeEnd = -1;
     }
@@ -347,7 +351,7 @@ const checkForIFrameAndCleanBuffer = (frameData) => {
         if (elements.videoElement.buffered && elements.videoElement.buffered.length > 0) {
             const currentBufferStart = elements.videoElement.buffered.start(0);
             const currentBufferEnd = elements.videoElement.buffered.end(elements.videoElement.buffered.length - 1);
-            const keepDuration = 5.0;
+            const keepDuration = 10.0;
             const targetRemoveEnd = Math.max(0, elements.videoElement.currentTime - keepDuration);
 
             if (currentBufferStart < targetRemoveEnd - 1.0) {
@@ -417,20 +421,25 @@ const calculateMomentumStats = () => {
 const checkForBadState = () => {
     if (!state.isRunning || !state.converter || elements.videoElement.readyState < elements.videoElement.HAVE_FUTURE_DATA) return;
 
+    const now = Date.now();
+    if (state.lastFrameReceived !== -1 && now - state.lastFrameReceived > PAUSE_DETECTION_THRESHOLD) {
+        log('Stream paused, skipping bad state check');
+        return;
+    }
+
     calculateMomentumStats();
     const { currentTime } = elements.videoElement;
-    const now = Date.now();
     let hasReasonToJump = false;
     let reasonMessage = '';
 
     if (state.momentumQualityStats && state.momentumQualityStats.decodedFrames <= 0 && state.momentumQualityStats.inputFrames > 0) {
-        state.noDecodedFramesSince = state.noDecodedFramesSince === -1 ? now : state.noDecodedFramesSince;
-        if (now - state.noDecodedFramesSince > MAX_TIME_TO_RECOVER) {
-            reasonMessage = `No frames decoded for ${now - state.noDecodedFramesSince} ms.`;
+        state.noExceptionFramesSince = state.noExceptionFramesSince === -1 ? now : state.noExceptionFramesSince;
+        if (now - state.noExceptionFramesSince > MAX_TIME_TO_RECOVER) {
+            reasonMessage = `No frames decoded for ${now - state.noExceptionFramesSince} ms`;
             hasReasonToJump = true;
         }
     } else {
-        state.noDecodedFramesSince = -1;
+        state.noExceptionFramesSince = -1;
     }
 
     state.currentTimeNotChangedSince = Math.abs(currentTime - state.lastVideoTime) < 0.01 ?
@@ -444,7 +453,7 @@ const checkForBadState = () => {
         if (bufferedDuration > MAX_BUFFER) {
             state.bigBufferSince = state.bigBufferSince === -1 ? now : state.bigBufferSince;
             if (now - state.bigBufferSince > MAX_TIME_TO_RECOVER) {
-                reasonMessage = reasonMessage || `Buffer ahead too large (${bufferedDuration.toFixed(3)}s > ${MAX_BUFFER}s) for ${now - state.bigBufferSince} ms.`;
+                reasonMessage = reasonMessage || `Buffer ahead too large (${bufferedDuration.toFixed(3)}s > ${MAX_BUFFER}s) for ${now - state.bigBufferSince} ms`;
                 hasReasonToJump = true;
             }
         } else {
@@ -454,7 +463,7 @@ const checkForBadState = () => {
         if (bufferedDuration < MAX_AHEAD) {
             state.aheadOfBufferSince = state.aheadOfBufferSince === -1 ? now : state.aheadOfBufferSince;
             if (now - state.aheadOfBufferSince > MAX_TIME_TO_RECOVER) {
-                reasonMessage = reasonMessage || `Playhead behind buffer (${bufferedDuration.toFixed(3)}s < ${MAX_AHEAD}s) for ${now - state.aheadOfBufferSince} ms.`;
+                reasonMessage = reasonMessage || `Playhead behind buffer (${bufferedDuration.toFixed(3)}s < ${MAX_AHEAD}s) for ${now - state.aheadOfBufferSince} ms`;
                 hasReasonToJump = true;
             }
         } else {
@@ -462,7 +471,7 @@ const checkForBadState = () => {
         }
 
         if (state.currentTimeNotChangedSince !== -1 && now - state.currentTimeNotChangedSince > MAX_TIME_TO_RECOVER) {
-            reasonMessage = reasonMessage || `Video currentTime stuck at ${currentTime.toFixed(3)} for ${now - state.currentTimeNotChangedSince} ms.`;
+            reasonMessage = reasonMessage || `Video currentTime stuck at ${currentTime.toFixed(3)} for ${now - state.currentTimeNotChangedSince} ms`;
             hasReasonToJump = true;
         }
 
@@ -472,10 +481,10 @@ const checkForBadState = () => {
         if (state.seekingSince !== -1) {
             waitingForSeekEnd = now - state.seekingSince;
             if (waitingForSeekEnd < MAX_SEEK_WAIT_MS) {
-                console.log(`[StallRecovery] Skipping recovery, seek already in progress for ${waitingForSeekEnd}ms.`);
+                console.log(`[StallRecovery] Skipping recovery, seek already in progress for ${waitingForSeekEnd}ms`);
                 return;
             } else {
-                console.warn(`[StallRecovery] Previous seek seems stuck (${waitingForSeekEnd}ms). Forcing new seek.`);
+                console.warn(`[StallRecovery] Previous seek seems stuck (${waitingForSeekEnd}ms). Forcing new seek`);
                 elements.videoElement.removeEventListener('seeked', onSeekEnd);
             }
         }
@@ -484,10 +493,10 @@ const checkForBadState = () => {
         log(`Attempting playback recovery (${reasonMessage.split('.')[0]})`);
 
         const onSeekEnd = () => {
-            console.log('[StallRecovery] Seek completed.');
+            console.log('[StallRecovery] Seek completed');
             state.seekingSince = -1;
             elements.videoElement.removeEventListener('seeked', onSeekEnd);
-            state.noDecodedFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
+            state.noExceptionFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
             if (state.isRunning) {
                 elements.videoElement.play().catch(e => console.warn("Autoplay prevented after seek:", e));
             }
@@ -503,7 +512,7 @@ const checkForBadState = () => {
             state.seekingSince = -1;
         }
     } else {
-        state.noDecodedFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
+        state.noExceptionFramesSince = state.currentTimeNotChangedSince = state.bigBufferSince = state.aheadOfBufferSince = -1;
     }
 };
 
@@ -603,7 +612,6 @@ const handleMouseDown = (event) => {
 
     const coords = getScaledCoordinates(event);
     if (coords) {
-        //console.log(`Mouse Down - Raw: (${event.clientX}, ${event.clientY}), Scaled: (${coords.x}, ${coords.y}), Device: (${state.deviceWidth}x${state.deviceHeight})`);
         state.lastMousePosition = coords;
         sendMouseEvent(AMOTION_EVENT_ACTION_DOWN, state.currentMouseButtons, coords.x, coords.y);
     } else {
@@ -629,7 +637,6 @@ const handleMouseUp = (event) => {
 
     const coords = getScaledCoordinates(event);
     const finalCoords = coords || state.lastMousePosition;
-    //console.log(`Mouse Up - Raw: (${event.clientX}, ${event.clientY}), Scaled: (${finalCoords.x}, ${finalCoords.y}), Device: (${state.deviceWidth}x${state.deviceHeight})`);
 
     sendMouseEvent(AMOTION_EVENT_ACTION_UP, state.currentMouseButtons, finalCoords.x, finalCoords.y);
 
@@ -648,7 +655,6 @@ const handleMouseMove = (event) => {
 
     const coords = getScaledCoordinates(event);
     if (coords) {
-        //console.log(`Mouse Move - Raw: (${event.clientX}, ${event.clientY}), Scaled: (${coords.x}, ${coords.y}), Device: (${state.deviceWidth}x${state.deviceHeight})`);
         state.lastMousePosition = coords;
         sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, coords.x, coords.y);
     } else {
@@ -670,7 +676,7 @@ const handleMouseLeave = (event) => {
 // Streaming
 const startStreaming = () => {
     if (state.isRunning || (state.ws && state.ws.readyState === WebSocket.OPEN)) {
-        log('Cannot start stream: Already running or WebSocket open.');
+        log('Cannot start stream: Already running or WebSocket open');
         return;
     }
 
@@ -682,12 +688,15 @@ const startStreaming = () => {
     elements.bitrateSelect.disabled = true;
     elements.enableAudioInput.disabled = true;
     elements.enableControlInput.disabled = true;
+    elements.flipOrientationBtn.disabled = true;
 
     state.controlEnabledAtStart = elements.enableControlInput.checked;
 
     Object.assign(state, {
+        ws: null,
         converter: null,
         audioContext: null,
+        audioDecoder: null,
         sourceBufferInternal: null,
         checkStateIntervalId: null,
         fpsCheckIntervalId: null,
@@ -699,46 +708,109 @@ const startStreaming = () => {
         removeStart: -1,
         removeEnd: -1,
         receivedFirstAudioPacket: false,
-        nextAudioTime: 0,
-        audioBufferQueue: [],
+        audioMetadata: null,
         videoStats: [],
         inputBytes: [],
         momentumQualityStats: null,
-        noDecodedFramesSince: -1,
+        noExceptionFramesSince: -1,
         frameTimestamps: [],
         isMouseDown: false,
         currentMouseButtons: 0,
-        lastMousePosition: { x: 0, y: 0 }
+        lastMousePosition: { x: 0, y: 0 },
+        nextAudioTime: 0,
+        totalAudioFrames: 0,
+        deviceWidth: 0,
+        deviceHeight: 0,
+        videoResolution: 'Unknown',
+        isRunning: true,
+        lastFrameReceived: -1,
     });
 
-    if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId);
-    if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId);
-
-    const wsUrl = `ws://${window.location.hostname}:8080`;
-    state.ws = new WebSocket(wsUrl);
+    state.ws = new WebSocket(`ws://${window.location.hostname}:8080`);
     state.ws.binaryType = 'arraybuffer';
 
-    initVideoConverter();
-
     state.ws.onopen = () => {
-        updateStatus('Connected. Requesting stream...');
-        log('WebSocket opened. Sending start options.');
-        state.ws.send(JSON.stringify({
+        log('WebSocket connected');
+        updateStatus('Connected, initializing stream...');
+        const message = {
             action: 'start',
             maxSize: parseInt(elements.maxSizeSelect.value) || 0,
             maxFps: parseInt(elements.maxFpsSelect.value) || 0,
             bitrate: (parseInt(elements.bitrateSelect.value) || 8) * 1000000,
             enableAudio: elements.enableAudioInput.checked,
-            enableControl: state.controlEnabledAtStart
-        }));
-
-        state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL);
+            enableControl: state.controlEnabledAtStart,
+            video: true,
+        };
+        state.ws.send(JSON.stringify(message));
+        initVideoConverter();
     };
 
     state.ws.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) {
-            if (!state.isRunning) return;
-
+        if (typeof event.data === 'string') {
+            try {
+                const message = JSON.parse(event.data);
+                switch (message.type) {
+                    case 'deviceName':
+                        log(`Device Name: ${message.name}`);
+                        updateStatus(`Connected to ${message.name}`);
+                        break;
+                    case 'videoInfo':
+                        state.deviceWidth = message.width;
+                        state.deviceHeight = message.height;
+                        state.videoResolution = `${message.width}x${message.height}`;
+                        log(`Video Info: Codec=0x${message.codecId.toString(16)}, ${state.videoResolution}`);
+                        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
+                            ? `${state.deviceWidth} / ${state.deviceHeight}`
+                            : '9 / 16';
+                        elements.videoPlaceholder.classList.add('hidden');
+                        elements.videoElement.classList.add('visible');
+                        if (state.converter) {
+                            requestAnimationFrame(() => {
+                                elements.videoElement.play().catch(e => console.warn("Autoplay prevented:", e));
+                                setTimeout(updateVideoBorder, 50);
+                            });
+                        } else {
+                            setTimeout(updateVideoBorder, 50);
+                        }
+                        break;
+                    case 'audioInfo':
+                        log(`Audio Info: Codec=0x${message.codecId.toString(16)}${message.metadata ? `, Metadata=${JSON.stringify(message.metadata)}` : ''}`);
+                        if (message.codecId === CODEC_IDS.AAC && message.metadata && elements.enableAudioInput.checked) {
+                            setupAudioPlayer(message.codecId, message.metadata);
+                        }
+                        break;
+                    case 'status':
+                        log(`Status: ${message.message}`);
+                        updateStatus(message.message);
+                        if (message.message === 'Streaming started') {
+                            elements.flipOrientationBtn.disabled = false;
+                            elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart);
+                            state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
+                            state.fpsCheckIntervalId = setInterval(checkAndUpdateFPS, FPS_CHECK_INTERVAL);
+                        } else if (message.message === 'Streaming stopped') {
+                            stopStreaming(false);
+                        }
+                        break;
+                    case 'error':
+                        log(`Error: ${message.message}`);
+                        updateStatus(`Error: ${message.message}`);
+                        stopStreaming(false);
+                        break;
+                    case 'deviceMessage':
+                        try {
+                            const deviceData = new Uint8Array(Buffer.from(message.data, 'base64'));
+                            log(`Device Message: ${deviceData.length} bytes`);
+                        } catch (e) {
+                            console.error(`Error processing device message: ${e}`);
+                        }
+                        break;
+                    default:
+                        log(`Unknown message type: ${message.type}`);
+                }
+            } catch (e) {
+                console.error(`Error parsing JSON message: ${e}`);
+            }
+        } else if (event.data instanceof ArrayBuffer) {
             const dataView = new DataView(event.data);
             if (dataView.byteLength < 1) return;
 
@@ -749,94 +821,27 @@ const startStreaming = () => {
             if (type === BINARY_TYPES.VIDEO && state.converter) {
                 state.inputBytes.push({ timestamp: Date.now(), bytes: payload.byteLength });
                 state.frameTimestamps.push(Date.now());
-                state.converter.appendRawData(payloadUint8);
+                state.lastFrameReceived = Date.now();
                 checkForIFrameAndCleanBuffer(payloadUint8);
-            } else if (type === BINARY_TYPES.AUDIO && elements.enableAudioInput.checked && state.audioContext) {
-                handleAudioData(payload);
-            }
-        } else if (typeof event.data === 'string') {
-            try {
-                const message = JSON.parse(event.data);
-                switch (message.type) {
-                    case 'status':
-                        updateStatus(message.message);
-                        log(`Status: ${message.message}`);
-                        if (message.message === 'Streaming started') {
-                            state.isRunning = true;
-                            elements.startButton.disabled = true;
-                            elements.stopButton.disabled = false;
-                            elements.maxSizeSelect.disabled = true;
-                            elements.maxFpsSelect.disabled = true;
-                            elements.bitrateSelect.disabled = true;
-                            elements.enableAudioInput.disabled = true;
-                            elements.enableControlInput.disabled = true;
-							elements.flipOrientationBtn.disabled = false; // <-- ENABLE BUTTON
-                            elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart);
-                            if (!state.checkStateIntervalId) {
-                                state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
-                            }
-                        } else if (message.message === 'Streaming stopped') {
-                            stopStreaming(false);
-                        }
-                        break;
-                    case 'videoInfo':
-                        state.videoResolution = `${message.width}x${message.height}`;
-                        state.deviceWidth = message.width;
-                        state.deviceHeight = message.height;
-                        log(`Video dimensions updated: ${state.videoResolution}`);
-                        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
-                            ? `${state.deviceWidth} / ${state.deviceHeight}`
-                            : '9 / 16';
-                        elements.videoPlaceholder.classList.add('hidden');
-                        elements.videoElement.classList.add('visible');
-                        //elements.videoElement.style.width = '100%';
-                        //elements.videoElement.style.height = '100%';
-                        if (state.converter) {
-                            requestAnimationFrame(() => {
-                                elements.videoElement.play().catch(e => console.warn("Autoplay prevented:", e));
-                                // Ensure border updates after potential layout changes
-                                setTimeout(updateVideoBorder, 50); // <-- ADD THIS (slight delay)
-                            });
-                        } else {
-                             setTimeout(updateVideoBorder, 50); // <-- ADD THIS (slight delay)
-                        }
-                        break;
-                    case 'audioInfo':
-                        log(`Audio info: Codec ID 0x${message.codecId?.toString(16)}`);
-                        if (elements.enableAudioInput.checked) {
-                            setupAudioPlayer(message.codecId);
-                        }
-                        break;
-                    case 'deviceName':
-                        log(`Device name: ${message.name}`);
-                        break;
-                    case 'error':
-                        log(`Server Error: ${message.message}`);
-                        updateStatus(`Error: ${message.message}`);
-                        stopStreaming(false);
-                        break;
-                    case 'deviceMessage':
-                        console.log("Received message from device (e.g., clipboard):", message.data);
-                        break;
+                try {
+                    state.converter.appendRawData(payloadUint8);
+                } catch (e) {
+                    console.error(`Error appending video data: ${e}`);
                 }
-            } catch (e) {
-                console.error('Error parsing JSON message:', e, 'Raw data:', event.data);
-                updateStatus('Error processing server message');
+            } else if (type === BINARY_TYPES.AUDIO && elements.enableAudioInput.checked) {
+                handleAudioData(payload);
             }
         }
     };
 
-    state.ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-        updateStatus('WebSocket error');
-        log('WebSocket error occurred.');
+    state.ws.onclose = (event) => {
+        log(`WebSocket closed (Code: ${event.code}, Reason: ${event.reason})`);
         stopStreaming(false);
     };
 
-    state.ws.onclose = (event) => {
-        const reason = event.reason || `code ${event.code}`;
-        updateStatus(event.wasClean ? `Disconnected (${reason})` : `Connection Lost (${reason})`);
-        log(`WebSocket closed: ${reason}`);
+    state.ws.onerror = (error) => {
+        console.error(`WebSocket error: ${error}`);
+        updateStatus('WebSocket error');
         stopStreaming(false);
     };
 };
@@ -849,33 +854,37 @@ const stopStreaming = (sendDisconnect = true) => {
         return;
     }
 
-    if (state.checkStateIntervalId) clearInterval(state.checkStateIntervalId);
-    if (state.fpsCheckIntervalId) clearInterval(state.fpsCheckIntervalId);
-
-    state.isRunning = false;
-    elements.startButton.disabled = false;
-    elements.stopButton.disabled = true;
-    elements.maxSizeSelect.disabled = false;
-    elements.maxFpsSelect.disabled = false;
-    elements.bitrateSelect.disabled = false;
-    elements.enableAudioInput.disabled = false;
-    elements.enableControlInput.disabled = false;
-    elements.videoElement.classList.remove('control-enabled');
-
-    if (state.ws) {
-        if (sendDisconnect && state.ws.readyState === WebSocket.OPEN) {
-            try {
-                state.ws.send(JSON.stringify({ action: 'disconnect' }));
-                log('Sent disconnect message.');
-            } catch (e) {
-                console.error("Error sending disconnect message:", e);
-            }
+    if (state.ws && state.ws.readyState === WebSocket.OPEN && sendDisconnect) {
+        try {
+            state.ws.send(JSON.stringify({ action: 'disconnect' }));
+        } catch (e) {
+            console.error("Error sending disconnect message:", e);
         }
-        if (state.ws.readyState < WebSocket.CLOSING) {
-            state.ws.close(1000, 'User stopped streaming');
-        }
-        state.ws = null;
+        state.ws.close(1000, 'User stopped streaming');
     }
+    state.ws = null;
+
+    if (state.checkStateIntervalId) {
+        clearInterval(state.checkStateIntervalId);
+        state.checkStateIntervalId = null;
+    }
+    if (state.fpsCheckIntervalId) {
+        clearInterval(state.fpsCheckIntervalId);
+        state.fpsCheckIntervalId = null;
+    }
+
+    if (state.audioDecoder) {
+        state.audioDecoder.close();
+        state.audioDecoder = null;
+    }
+    if (state.audioContext) {
+        state.audioContext.close();
+        state.audioContext = null;
+    }
+    state.audioMetadata = null;
+    state.receivedFirstAudioPacket = false;
+    state.nextAudioTime = 0;
+    state.totalAudioFrames = 0;
 
     if (state.converter) {
         try {
@@ -885,18 +894,8 @@ const stopStreaming = (sendDisconnect = true) => {
             console.error("Error during converter cleanup:", e);
         }
         state.converter = null;
-        state.sourceBufferInternal = null;
     }
-
-    if (state.audioContext) {
-        state.audioContext.close().catch(e => console.error(`Error closing AudioContext: ${e}`));
-        state.audioContext = null;
-        state.audioBufferQueue.forEach(source => { try { source.stop(0); source.disconnect(); } catch (e) {} });
-        state.audioBufferQueue = [];
-        state.nextAudioTime = 0;
-        state.audioCodecId = null;
-        state.receivedFirstAudioPacket = false;
-    }
+    state.sourceBufferInternal = null;
 
     elements.videoElement.pause();
     try {
@@ -905,10 +904,26 @@ const stopStreaming = (sendDisconnect = true) => {
         elements.videoElement.load();
     } catch (e) {}
 
+    elements.videoElement.classList.remove('visible');
+    elements.videoElement.classList.remove('control-enabled');
+    elements.videoPlaceholder.classList.remove('hidden');
+    elements.videoBorder.style.display = 'none';
+    elements.streamArea.style.aspectRatio = '9 / 16';
+
+    if (!sendDisconnect) {
+        state.isRunning = false;
+        updateStatus('Disconnected');
+        elements.startButton.disabled = false;
+        elements.stopButton.disabled = true;
+        elements.maxSizeSelect.disabled = false;
+        elements.maxFpsSelect.disabled = false;
+        elements.bitrateSelect.disabled = false;
+        elements.enableAudioInput.disabled = false;
+        elements.enableControlInput.disabled = false;
+        elements.flipOrientationBtn.disabled = true;
+    }
+
     Object.assign(state, {
-        deviceWidth: 0,
-        deviceHeight: 0,
-        videoResolution: 'Unknown',
         currentTimeNotChangedSince: -1,
         bigBufferSince: -1,
         aheadOfBufferSince: -1,
@@ -919,27 +934,21 @@ const stopStreaming = (sendDisconnect = true) => {
         videoStats: [],
         inputBytes: [],
         momentumQualityStats: null,
-        noDecodedFramesSince: -1,
+        noExceptionFramesSince: -1,
         frameTimestamps: [],
-        controlEnabledAtStart: false,
         isMouseDown: false,
         currentMouseButtons: 0,
-        lastMousePosition: { x: 0, y: 0 }
+        lastMousePosition: { x: 0, y: 0 },
+        deviceWidth: 0,
+        deviceHeight: 0,
+        videoResolution: 'Unknown',
+        lastFrameReceived: -1,
     });
-
-    elements.videoPlaceholder.classList.remove('hidden');
-    elements.videoElement.classList.remove('visible');
-    elements.streamArea.style.aspectRatio = '9 / 16';
-
-    if (document.fullscreenElement === elements.videoElement) {
-        document.exitFullscreen().catch(e => console.error("Error exiting fullscreen:", e));
-    }
-    elements.videoElement.classList.remove('fullscreen');
-    elements.videoBorder.style.display = 'none'; // <-- ADD THIS
-    log('Stream stopped.');
 };
 
 // Event Listeners
+elements.startButton.addEventListener('click', startStreaming);
+elements.stopButton.addEventListener('click', () => stopStreaming(true));
 elements.themeToggle.addEventListener('click', () => {
     const body = document.body;
     const newTheme = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
@@ -962,18 +971,12 @@ showThemeToggle();
 elements.fullscreenBtn.addEventListener('click', () => {
     if (!document.fullscreenElement) {
         if (state.isRunning && elements.videoElement.classList.contains('visible')) {
-            elements.videoElement.requestFullscreen().catch(err => {
-                console.error(`Fullscreen error: ${err}`);
-                log(`Failed to enter fullscreen: ${err.message}`);
-            });
+            elements.videoElement.requestFullscreen().catch(e => console.error(`Fullscreen error: ${e}`));
         } else {
-            log("Cannot enter fullscreen: Stream not running.");
+            log("Cannot enter fullscreen: Stream not running");
         }
     } else {
-        document.exitFullscreen().catch(err => {
-            console.error(`Exit fullscreen error: ${err}`);
-            log(`Failed to exit fullscreen: ${err.message}`);
-        });
+        document.exitFullscreen();
     }
 });
 
@@ -982,8 +985,31 @@ document.addEventListener('fullscreenchange', () => {
     log(document.fullscreenElement ? 'Entered fullscreen' : 'Exited fullscreen');
 });
 
-elements.startButton.addEventListener('click', startStreaming);
-elements.stopButton.addEventListener('click', () => stopStreaming(true));
+elements.flipOrientationBtn.addEventListener('click', () => {
+    if (!state.isRunning) {
+        log("Cannot flip orientation: Stream not running");
+        return;
+    }
+    if (state.deviceWidth > 0 && state.deviceHeight > 0) {
+        log(`Flipping orientation from ${state.deviceWidth}x${state.deviceHeight}`);
+        const tempWidth = state.deviceWidth;
+        state.deviceWidth = state.deviceHeight;
+        state.deviceHeight = tempWidth;
+        state.videoResolution = `${state.deviceWidth}x${state.deviceHeight}`;
+
+        log(`New orientation: ${state.deviceWidth}x${state.deviceHeight}`);
+        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
+            ? `${state.deviceWidth} / ${state.deviceHeight}`
+            : '9 / 16';
+
+        requestAnimationFrame(() => {
+            updateVideoBorder();
+        });
+    } else {
+        log("Cannot flip orientation: Dimensions not set");
+    }
+});
+
 window.addEventListener('beforeunload', () => {
     if (state.isRunning || (state.ws && state.ws.readyState === WebSocket.OPEN)) {
         stopStreaming(true);
@@ -1000,47 +1026,13 @@ elements.videoElement.addEventListener('contextmenu', (e) => {
     }
 });
 
-
-// --- Add this event listener ---
-elements.flipOrientationBtn.addEventListener('click', () => {
-    if (!state.isRunning) {
-        log("Cannot flip orientation: Stream not running.");
-        return;
-    }
-    if (state.deviceWidth > 0 && state.deviceHeight > 0) {
-        log(`Flipping orientation from ${state.deviceWidth}x${state.deviceHeight}`);
-        // Swap the dimensions in the state
-        const tempWidth = state.deviceWidth;
-        state.deviceWidth = state.deviceHeight;
-        state.deviceHeight = tempWidth;
-        state.videoResolution = `${state.deviceWidth}x${state.deviceHeight}`; // Update resolution string
-
-        log(`New orientation state: ${state.deviceWidth}x${state.deviceHeight}`);
-
-        // Update container aspect ratio
-        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
-            ? `${state.deviceWidth} / ${state.deviceHeight}`
-            : '9 / 16';
-
-        // Immediately update the visuals
-        // Use requestAnimationFrame to allow potential layout reflow first
-         requestAnimationFrame(() => {
-            updateVideoBorder();
-         });
-
-    } else {
-        log("Cannot flip orientation: Dimensions not set.");
-    }
-});
-
-elements.flipOrientationBtn.disabled = true;
-
 const resizeObserver = new ResizeObserver(() => {
-    updateVideoBorder(); // <-- ADD THIS
+    updateVideoBorder();
 });
 resizeObserver.observe(elements.videoElement);
 
-// Initialization
-elements.stopButton.disabled = true;
+// Initialize
 updateStatus('Idle');
-log('Page loaded. Ready.');
+elements.stopButton.disabled = true;
+elements.flipOrientationBtn.disabled = true;
+updateVideoBorder();

@@ -5,19 +5,17 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
-    "build": "esbuild src/main.js --bundle --outfile=public/main.js --format=iife --platform=browser"
+    "build": "browserify src/main.js > public/main.js"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "description": "",
   "dependencies": {
     "@devicefarmer/adbkit": "^3.3.8",
+    "browserify": "^17.0.1",
     "express": "^5.1.0",
     "h264-converter": "^0.1.4",
     "ws": "^8.18.1"
-  },
-  "devDependencies": {
-    "esbuild": "^0.25.3"
   }
 }
