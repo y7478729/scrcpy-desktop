@@ -3399,8 +3399,7 @@ const CODEC_IDS = { H264: 0x68323634, AAC: 0x00616163 };
 const NALU_TYPE_IDR = 5;
 const FPS_CHECK_INTERVAL = 10000;
 const TARGET_FPS_VALUES = [30, 50, 60, 120];
-// New constant for pause detection
-const PAUSE_DETECTION_THRESHOLD = 1000; // 1 second without frames indicates pause
+const PAUSE_DETECTION_THRESHOLD = 1000;
 
 // Constants (Control)
 const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
@@ -3471,8 +3470,7 @@ let state = {
     lastMousePosition: { x: 0, y: 0 },
     nextAudioTime: 0,
     totalAudioFrames: 0,
-    // New state for pause detection
-    lastFrameReceived: -1, // Timestamp of last received video frame
+    lastFrameReceived: -1,
 };
 
 // Utility Functions
@@ -3554,7 +3552,6 @@ const calculateAverageFPS = () => {
 };
 
 const checkAndUpdateFPS = () => {
-    // Skip FPS calculation if stream is paused (no recent frames)
     const now = Date.now();
     if (state.lastFrameReceived !== -1 && now - state.lastFrameReceived > PAUSE_DETECTION_THRESHOLD) {
         log('Stream paused, skipping FPS check');
@@ -3810,7 +3807,6 @@ const calculateMomentumStats = () => {
 const checkForBadState = () => {
     if (!state.isRunning || !state.converter || elements.videoElement.readyState < elements.videoElement.HAVE_FUTURE_DATA) return;
 
-    // Skip recovery if stream is paused (no recent frames)
     const now = Date.now();
     if (state.lastFrameReceived !== -1 && now - state.lastFrameReceived > PAUSE_DETECTION_THRESHOLD) {
         log('Stream paused, skipping bad state check');
@@ -4113,7 +4109,7 @@ const startStreaming = () => {
         deviceHeight: 0,
         videoResolution: 'Unknown',
         isRunning: true,
-        lastFrameReceived: -1, // Initialize pause detection
+        lastFrameReceived: -1,
     });
 
     state.ws = new WebSocket(`ws://${window.location.hostname}:8080`);
@@ -4211,7 +4207,6 @@ const startStreaming = () => {
             if (type === BINARY_TYPES.VIDEO && state.converter) {
                 state.inputBytes.push({ timestamp: Date.now(), bytes: payload.byteLength });
                 state.frameTimestamps.push(Date.now());
-                // Update last frame received timestamp
                 state.lastFrameReceived = Date.now();
                 checkForIFrameAndCleanBuffer(payloadUint8);
                 try {
@@ -4333,7 +4328,7 @@ const stopStreaming = (sendDisconnect = true) => {
         deviceWidth: 0,
         deviceHeight: 0,
         videoResolution: 'Unknown',
-        lastFrameReceived: -1, // Reset pause detection
+        lastFrameReceived: -1,
     });
 };
 
