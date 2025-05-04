@@ -3385,7 +3385,9 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
 },{}],12:[function(require,module,exports){
 (function (Buffer){(function (){
 const VideoConverter = require('h264-converter').default;
-const { setLogger } = require('h264-converter');
+const {
+    setLogger
+} = require('h264-converter');
 
 setLogger(() => {}, console.error);
 
@@ -3404,8 +3406,14 @@ const NALU_TYPE_IDR = 5;
 
 // Constants (Audio/Control)
 const AUDIO_BYTES_PER_SAMPLE = 2;
-const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
-const CODEC_IDS = { H264: 0x68323634, AAC: 0x00616163 };
+const BINARY_TYPES = {
+    VIDEO: 0,
+    AUDIO: 1
+};
+const CODEC_IDS = {
+    H264: 0x68323634,
+    AAC: 0x00616163
+};
 const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
 const AMOTION_EVENT_ACTION_DOWN = 0;
 const AMOTION_EVENT_ACTION_UP = 1;
@@ -3463,7 +3471,10 @@ let state = {
     controlEnabledAtStart: false,
     isMouseDown: false,
     currentMouseButtons: 0,
-    lastMousePosition: { x: 0, y: 0 },
+    lastMousePosition: {
+        x: 0,
+        y: 0
+    },
     nextAudioTime: 0,
     totalAudioFrames: 0,
 };
@@ -3501,7 +3512,8 @@ const updateVideoBorder = () => {
     const elementAspectRatio = elementWidth / elementHeight;
 
     let renderedVideoWidth, renderedVideoHeight;
-    let offsetX = 0, offsetY = 0;
+    let offsetX = 0,
+        offsetY = 0;
 
     if (elementAspectRatio > videoAspectRatio) {
         renderedVideoHeight = elementHeight;
@@ -3527,7 +3539,7 @@ const updateVideoBorder = () => {
 const isIFrame = (frameData) => {
     if (!frameData || frameData.length < 1) return false;
     let offset = frameData.length > 4 && frameData[0] === 0 && frameData[1] === 0 && frameData[2] === 0 && frameData[3] === 1 ? 4 :
-                 frameData.length > 3 && frameData[0] === 0 && frameData[1] === 0 && frameData[2] === 1 ? 3 : 0;
+        frameData.length > 3 && frameData[0] === 0 && frameData[1] === 0 && frameData[2] === 1 ? 3 : 0;
     return frameData.length > offset && (frameData[offset] & 0x1F) === NALU_TYPE_IDR;
 };
 
@@ -3537,7 +3549,9 @@ const initVideoConverter = () => {
     state.converter = new VideoConverter(elements.videoElement, fps, DEFAULT_FRAMES_PER_FRAGMENT);
     state.sourceBufferInternal = state.converter?.sourceBuffer || null;
 
-    elements.videoElement.addEventListener('canplay', onVideoCanPlay, { once: true });
+    elements.videoElement.addEventListener('canplay', onVideoCanPlay, {
+        once: true
+    });
     elements.videoElement.removeEventListener('error', onVideoError);
     elements.videoElement.addEventListener('error', onVideoError);
 };
@@ -3563,7 +3577,9 @@ const cleanSourceBuffer = () => {
     try {
         console.log(`Removing source buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
         state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
-        state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
+        state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, {
+            once: true
+        });
     } catch (e) {
         console.error(`Failed to clean source buffer: ${e}`);
         state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
@@ -3592,7 +3608,9 @@ const checkForIFrameAndCleanBuffer = (frameData) => {
                 state.removeStart = start;
                 state.removeEnd = end;
             }
-            state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
+            state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, {
+                once: true
+            });
         }
     }
 };
@@ -3652,7 +3670,9 @@ const calculateMomentumStats = () => {
 const checkForBadState = () => {
     if (!state.isRunning || !state.converter) return;
 
-    const { currentTime } = elements.videoElement;
+    const {
+        currentTime
+    } = elements.videoElement;
     const now = Date.now();
     let hasReasonToJump = false;
 
@@ -3754,9 +3774,11 @@ const setupAudioPlayer = (codecId, metadata) => {
     }
 
     try {
-        state.audioContext = new AudioContext({
-            sampleRate: metadata.sampleRate || 48000,
-        });
+		if (!state.audioContext || state.audioContext.state === 'closed') {
+			state.audioContext = new AudioContext({
+				sampleRate: metadata.sampleRate || 48000,
+			});
+		}
 
         state.audioDecoder = new AudioDecoder({
             output: (audioData) => {
@@ -3770,29 +3792,35 @@ const setupAudioPlayer = (codecId, metadata) => {
                         sampleRate
                     );
 
-                    const isInterleaved = audioData.format === 'f32' || audioData.format === 'f32-interleaved';
-                    if (isInterleaved) {
-                        const interleavedData = new Float32Array(audioData.numberOfFrames * numberOfChannels);
-                        audioData.copyTo(interleavedData, { planeIndex: 0 });
-
-                        for (let channel = 0; channel < numberOfChannels; channel++) {
-                            const channelData = buffer.getChannelData(channel);
-                            for (let i = 0; i < audioData.numberOfFrames; i++) {
-                                channelData[i] = interleavedData[i * numberOfChannels + channel];
-                            }
-                        }
-                    } else {
-                        for (let channel = 0; channel < numberOfChannels; channel++) {
-                            audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
-                        }
-                    }
+					const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
+					const isInterleaved = audioData.format === 'f32-interleaved' || (isFirefox && audioData.format === 'f32');
+					if (isInterleaved) {
+						const interleavedData = new Float32Array(audioData.numberOfFrames * audioData.numberOfChannels);
+						audioData.copyTo(interleavedData, { planeIndex: 0 }); // Always planeIndex: 0 for interleaved
+						for (let channel = 0; channel < audioData.numberOfChannels; channel++) {
+							const channelData = buffer.getChannelData(channel);
+							for (let i = 0; i < audioData.numberOfFrames; i++) {
+								channelData[i] = interleavedData[i * audioData.numberOfChannels + channel];
+							}
+						}
+					} else if (audioData.format === 'f32-planar' || (!isFirefox && audioData.format === 'f32')) {
+						for (let channel = 0; channel < audioData.numberOfChannels; channel++) {
+							audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
+						}
+					} else {
+						console.error(`Unsupported audio format: ${audioData.format}`);
+						return;
+					}
 
                     const source = state.audioContext.createBufferSource();
                     source.buffer = buffer;
                     source.connect(state.audioContext.destination);
                     const currentTime = state.audioContext.currentTime;
                     const bufferDuration = audioData.numberOfFrames / sampleRate;
-                    state.nextAudioTime = Math.max(state.nextAudioTime, currentTime);
+					if (state.nextAudioTime < currentTime) {
+						console.warn(`Audio scheduling behind by ${currentTime - state.nextAudioTime}s`);
+						state.nextAudioTime = currentTime;
+					}
                     source.start(state.nextAudioTime);
                     state.nextAudioTime += bufferDuration;
                 } catch (e) {
@@ -3846,16 +3874,25 @@ const handleAudioData = (arrayBuffer) => {
 const getScaledCoordinates = (event) => {
     const video = elements.videoElement;
     const screenInfo = {
-        videoSize: { width: state.deviceWidth, height: state.deviceHeight }
+        videoSize: {
+            width: state.deviceWidth,
+            height: state.deviceHeight
+        }
     };
 
     if (!screenInfo || !screenInfo.videoSize || !screenInfo.videoSize.width || !screenInfo.videoSize.height) {
         return null;
     }
-    const { width, height } = screenInfo.videoSize;
+    const {
+        width,
+        height
+    } = screenInfo.videoSize;
     const target = video;
     const rect = target.getBoundingClientRect();
-    let { clientWidth, clientHeight } = target;
+    let {
+        clientWidth,
+        clientHeight
+    } = target;
 
     let touchX = event.clientX - rect.left;
     let touchY = event.clientY - rect.top;
@@ -3887,7 +3924,10 @@ const getScaledCoordinates = (event) => {
     deviceX = Math.max(0, Math.min(width, deviceX));
     deviceY = Math.max(0, Math.min(height, deviceY));
 
-    return { x: deviceX, y: deviceY };
+    return {
+        x: deviceX,
+        y: deviceY
+    };
 };
 
 // Control Message Sending (Unchanged)
@@ -3928,11 +3968,18 @@ const handleMouseDown = (event) => {
 
     state.isMouseDown = true;
     let buttonFlag = 0;
-    switch(event.button) {
-        case 0: buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY; break;
-        case 1: buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY; break;
-        case 2: buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY; break;
-        default: return;
+    switch (event.button) {
+        case 0:
+            buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY;
+            break;
+        case 1:
+            buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY;
+            break;
+        case 2:
+            buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY;
+            break;
+        default:
+            return;
     }
     state.currentMouseButtons |= buttonFlag;
 
@@ -3950,11 +3997,18 @@ const handleMouseUp = (event) => {
     event.preventDefault();
 
     let buttonFlag = 0;
-    switch(event.button) {
-        case 0: buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY; break;
-        case 1: buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY; break;
-        case 2: buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY; break;
-        default: return;
+    switch (event.button) {
+        case 0:
+            buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY;
+            break;
+        case 1:
+            buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY;
+            break;
+        case 2:
+            buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY;
+            break;
+        default:
+            return;
     }
 
     if (!(state.currentMouseButtons & buttonFlag)) {
@@ -4040,7 +4094,10 @@ const startStreaming = () => {
         noDecodedFramesSince: -1,
         isMouseDown: false,
         currentMouseButtons: 0,
-        lastMousePosition: { x: 0, y: 0 },
+        lastMousePosition: {
+            x: 0,
+            y: 0
+        },
         nextAudioTime: 0,
         totalAudioFrames: 0,
         deviceWidth: 0,
@@ -4082,9 +4139,9 @@ const startStreaming = () => {
                         state.deviceHeight = message.height;
                         state.videoResolution = `${message.width}x${message.height}`;
                         log(`Video Info: Codec=0x${message.codecId.toString(16)}, ${state.videoResolution}`);
-                        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
-                            ? `${state.deviceWidth} / ${state.deviceHeight}`
-                            : '9 / 16';
+                        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
+                            `${state.deviceWidth} / ${state.deviceHeight}` :
+                            '9 / 16';
                         elements.videoPlaceholder.classList.add('hidden');
                         elements.videoElement.classList.add('visible');
                         if (state.converter) {
@@ -4141,7 +4198,10 @@ const startStreaming = () => {
             const payloadUint8 = new Uint8Array(payload);
 
             if (type === BINARY_TYPES.VIDEO && state.converter) {
-                state.inputBytes.push({ timestamp: Date.now(), bytes: payload.byteLength });
+                state.inputBytes.push({
+                    timestamp: Date.now(),
+                    bytes: payload.byteLength
+                });
                 state.converter.appendRawData(payloadUint8);
                 checkForIFrameAndCleanBuffer(payloadUint8);
             } else if (type === BINARY_TYPES.AUDIO && elements.enableAudioInput.checked) {
@@ -4172,7 +4232,9 @@ const stopStreaming = (sendDisconnect = true) => {
 
     if (state.ws && state.ws.readyState === WebSocket.OPEN && sendDisconnect) {
         try {
-            state.ws.send(JSON.stringify({ action: 'disconnect' }));
+            state.ws.send(JSON.stringify({
+                action: 'disconnect'
+            }));
         } catch (e) {
             console.error("Error sending disconnect message:", e);
         }
@@ -4249,7 +4311,10 @@ const stopStreaming = (sendDisconnect = true) => {
         noDecodedFramesSince: -1,
         isMouseDown: false,
         currentMouseButtons: 0,
-        lastMousePosition: { x: 0, y: 0 },
+        lastMousePosition: {
+            x: 0,
+            y: 0
+        },
         deviceWidth: 0,
         deviceHeight: 0,
         videoResolution: 'Unknown',
@@ -4308,9 +4373,9 @@ elements.flipOrientationBtn.addEventListener('click', () => {
         state.videoResolution = `${state.deviceWidth}x${state.deviceHeight}`;
 
         log(`New orientation: ${state.deviceWidth}x${state.deviceHeight}`);
-        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0
-            ? `${state.deviceWidth} / ${state.deviceHeight}`
-            : '9 / 16';
+        elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
+            `${state.deviceWidth} / ${state.deviceHeight}` :
+            '9 / 16';
 
         requestAnimationFrame(() => {
             updateVideoBorder();

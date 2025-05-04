@@ -9,11 +9,11 @@ cls
 
 :: Display header with improved ASCII art
 echo.
-echo   [1;33m===============================================[0m
-echo       [1;36mscrcpy desktop by serifpersia[0m
-echo   [1;33m===============================================[0m
-echo     [1;34mhttps://github.com/serifpersia/scrcpy-desktop[0m
-echo   [1;33m===============================================[0m
+echo   [1;33m---------------------------------------------[0m
+echo   [1;36m               scrcpy-desktop                [0m        
+echo   [1;33m---------------------------------------------[0m
+echo   [1;34mhttps://github.com/serifpersia/scrcpy-desktop[0m
+echo   [1;33m---------------------------------------------[0m
 echo.
 echo [1;32mStarting scrcpy desktop...[0m
 echo.

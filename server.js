@@ -2,11 +2,15 @@ const express = require('express');
 const net = require('net');
 const path = require('path');
 const util = require('util');
-const { exec } = require('child_process');
+const {
+    exec
+} = require('child_process');
 const adbkit = require('@devicefarmer/adbkit');
 const WebSocket = require('ws');
 const crypto = require('crypto');
-const { Worker } = require('worker_threads');
+const {
+    Worker
+} = require('worker_threads');
 
 const SERVER_PORT_BASE = 27183;
 const WEBSOCKET_PORT = 8080;
@@ -15,7 +19,12 @@ const SERVER_JAR_PATH = path.resolve(__dirname, 'public/vendor/Genymobile/scrcpy
 const SERVER_DEVICE_PATH = '/data/local/tmp/scrcpy-server.jar';
 const SCRCPY_VERSION = '3.2';
 
-const LogLevel = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+const LogLevel = {
+    DEBUG: 0,
+    INFO: 1,
+    WARN: 2,
+    ERROR: 3
+};
 const CURRENT_LOG_LEVEL = LogLevel.INFO;
 
 const BASE_SCRCPY_OPTIONS = {
@@ -30,24 +39,39 @@ const AUDIO_METADATA_LENGTH = 4;
 const PACKET_HEADER_LENGTH = 12;
 
 const MESSAGE_TYPES = {
-    DEVICE_NAME: 'deviceName', VIDEO_INFO: 'videoInfo', AUDIO_INFO: 'audioInfo',
-    STATUS: 'status', ERROR: 'error', DEVICE_MESSAGE: 'deviceMessage'
+    DEVICE_NAME: 'deviceName',
+    VIDEO_INFO: 'videoInfo',
+    AUDIO_INFO: 'audioInfo',
+    STATUS: 'status',
+    ERROR: 'error',
+    DEVICE_MESSAGE: 'deviceMessage'
 };
-const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
+const BINARY_TYPES = {
+    VIDEO: 0,
+    AUDIO: 1
+};
 
 const CODEC_IDS = {
-    H264: 0x68323634, AAC: 0x00616163,
+    H264: 0x68323634,
+    AAC: 0x00616163,
 };
 
 const CODEC_METADATA_LENGTHS = {
-    [CODEC_IDS.H264]: VIDEO_METADATA_LENGTH, [CODEC_IDS.H265]: VIDEO_METADATA_LENGTH,
-    [CODEC_IDS.AV1]: VIDEO_METADATA_LENGTH, [CODEC_IDS.OPUS]: AUDIO_METADATA_LENGTH,
-    [CODEC_IDS.AAC]: AUDIO_METADATA_LENGTH, [CODEC_IDS.RAW]: AUDIO_METADATA_LENGTH,
+    [CODEC_IDS.H264]: VIDEO_METADATA_LENGTH,
+    [CODEC_IDS.H265]: VIDEO_METADATA_LENGTH,
+    [CODEC_IDS.AV1]: VIDEO_METADATA_LENGTH,
+    [CODEC_IDS.OPUS]: AUDIO_METADATA_LENGTH,
+    [CODEC_IDS.AAC]: AUDIO_METADATA_LENGTH,
+    [CODEC_IDS.RAW]: AUDIO_METADATA_LENGTH,
 };
 
 const CODEC_SOCKET_TYPES = {
-    [CODEC_IDS.H264]: 'video', [CODEC_IDS.H265]: 'video', [CODEC_IDS.AV1]: 'video',
-    [CODEC_IDS.OPUS]: 'audio', [CODEC_IDS.AAC]: 'audio', [CODEC_IDS.RAW]: 'audio',
+    [CODEC_IDS.H264]: 'video',
+    [CODEC_IDS.H265]: 'video',
+    [CODEC_IDS.AV1]: 'video',
+    [CODEC_IDS.OPUS]: 'audio',
+    [CODEC_IDS.AAC]: 'audio',
+    [CODEC_IDS.RAW]: 'audio',
 };
 
 const adb = new adbkit.Client();
@@ -57,9 +81,22 @@ const wsClients = new Map();
 const workers = new Map(); // Map<scid, Worker>
 
 const SAMPLE_RATE_MAP = {
-    0: 96000, 1: 88200, 2: 64000, 3: 48000, 4: 44100, 5: 32000,
-    6: 24000, 7: 22050, 8: 16000, 9: 12000, 10: 11025, 11: 8000,
-    12: 7350, 13: 0, 14: 0, 15: 0
+    0: 96000,
+    1: 88200,
+    2: 64000,
+    3: 48000,
+    4: 44100,
+    5: 32000,
+    6: 24000,
+    7: 22050,
+    8: 16000,
+    9: 12000,
+    10: 11025,
+    11: 8000,
+    12: 7350,
+    13: 0,
+    14: 0,
+    15: 0
 };
 
 const PROFILE_MAP = {
@@ -119,7 +156,11 @@ function parseAudioSpecificConfig(buffer) {
 }
 
 function createAdtsHeader(aacFrameLength, metadata) {
-    const { profile, sampleRateIndex, channelConfig } = metadata;
+    const {
+        profile,
+        sampleRateIndex,
+        channelConfig
+    } = metadata;
     const frameLength = 7 + aacFrameLength;
 
     const header = Buffer.alloc(7);
@@ -134,10 +175,15 @@ function createAdtsHeader(aacFrameLength, metadata) {
 }
 
 function createWebSocketServer() {
-    const wss = new WebSocket.Server({ port: WEBSOCKET_PORT });
+    const wss = new WebSocket.Server({
+        port: WEBSOCKET_PORT
+    });
     wss.on('connection', (ws) => {
         const clientId = crypto.randomUUID();
-        wsClients.set(clientId, { ws, session: null });
+        wsClients.set(clientId, {
+            ws,
+            session: null
+        });
         log(LogLevel.INFO, `[WebSocket] Client connected: ${clientId}`);
 
         ws.on('message', async (data, isBinary) => {
@@ -153,7 +199,13 @@ function createWebSocketServer() {
                         const worker = workers.get(client.session);
                         if (worker) {
                             log(LogLevel.DEBUG, `[Control Send] Forwarding ${data.length} bytes to worker for SCID ${client.session}`);
-                            worker.postMessage({ type: 'controlData', data: Buffer.from(data).toString('base64'), scid: client.session, clientId });
+                            const bufferData = Buffer.isBuffer(data) ? data : Buffer.from(data);
+                            worker.postMessage({
+                                type: 'controlData',
+                                data: bufferData,
+                                scid: client.session,
+                                clientId
+                            });
                         } else {
                             log(LogLevel.WARN, `[Control Send] No worker for SCID ${client.session}`);
                         }
@@ -167,16 +219,26 @@ function createWebSocketServer() {
                     message = JSON.parse(data.toString());
                     log(LogLevel.INFO, `[WebSocket] Parsed command from ${clientId}: ${message.action}`);
                     switch (message.action) {
-                        case 'start': await handleStart(clientId, ws, message); break;
-                        case 'disconnect': await handleDisconnect(clientId); break;
+                        case 'start':
+                            await handleStart(clientId, ws, message);
+                            break;
+                        case 'disconnect':
+                            await handleDisconnect(clientId);
+                            break;
                         default:
                             log(LogLevel.WARN, `[WebSocket] Unknown action from ${clientId}: ${message.action}`);
-                            ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Unknown action: ${message.action}` }));
+                            ws.send(JSON.stringify({
+                                type: MESSAGE_TYPES.ERROR,
+                                message: `Unknown action: ${message.action}`
+                            }));
                             break;
                     }
                 } catch (err) {
                     log(LogLevel.ERROR, `[WebSocket] Invalid JSON from ${clientId}: ${err.message}. Data: ${data.toString().substring(0, 100)}`);
-                    ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: 'Invalid message format' }));
+                    ws.send(JSON.stringify({
+                        type: MESSAGE_TYPES.ERROR,
+                        message: 'Invalid message format'
+                    }));
                 }
             }
         });
@@ -197,12 +259,24 @@ function createWebSocketServer() {
 async function executeCommand(command, description) {
     log(LogLevel.DEBUG, `[Exec] Running: ${description} (${command})`);
     try {
-        const { stdout, stderr } = await execPromise(command);
-        if (stderr && !(description.includes('Remove') && stderr.includes('not found'))) { log(LogLevel.WARN, `[Exec] Stderr (${description}): ${stderr.trim()}`); }
-        else if (stderr) { log(LogLevel.DEBUG, `[Exec] Stderr (${description}): ${stderr.trim()} (Ignored)`); }
-        if (stdout) { log(LogLevel.DEBUG, `[Exec] Stdout (${description}): ${stdout.trim()}`); }
+        const {
+            stdout,
+            stderr
+        } = await execPromise(command);
+        if (stderr && !(description.includes('Remove') && stderr.includes('not found'))) {
+            log(LogLevel.WARN, `[Exec] Stderr (${description}): ${stderr.trim()}`);
+        } else if (stderr) {
+            log(LogLevel.DEBUG, `[Exec] Stderr (${description}): ${stderr.trim()} (Ignored)`);
+        }
+        if (stdout) {
+            log(LogLevel.DEBUG, `[Exec] Stdout (${description}): ${stdout.trim()}`);
+        }
         log(LogLevel.DEBUG, `[Exec] Success: ${description}`);
-        return { success: true, stdout, stderr };
+        return {
+            success: true,
+            stdout,
+            stderr
+        };
     } catch (error) {
         log(LogLevel.ERROR, `[Exec] Error (${description}): ${error.message}`);
         if (error.stderr) log(LogLevel.ERROR, `[Exec] Stderr: ${error.stderr.trim()}`);
@@ -216,7 +290,10 @@ async function handleStart(clientId, ws, message) {
     const client = wsClients.get(clientId);
     if (!client || client.session) {
         log(client ? LogLevel.WARN : LogLevel.ERROR, `[HandleStart ${clientId}] ${client ? 'Session already active' : 'Client object not found!'}`);
-        ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: client ? 'Session already active' : 'Internal error: Client not found.' }));
+        ws.send(JSON.stringify({
+            type: MESSAGE_TYPES.ERROR,
+            message: client ? 'Session already active' : 'Internal error: Client not found.'
+        }));
         return;
     }
 
@@ -228,13 +305,21 @@ async function handleStart(clientId, ws, message) {
         deviceId = devices[0].id;
         log(LogLevel.INFO, `[HandleStart ${clientId}] Using device: ${deviceId}`);
 
-        const runOptions = { ...BASE_SCRCPY_OPTIONS };
-        const maxSize = parseInt(message.maxSize); if (!isNaN(maxSize) && maxSize > 0) runOptions.max_size = String(maxSize);
-        const maxFps = parseInt(message.maxFps); if (!isNaN(maxFps) && maxFps > 0) runOptions.max_fps = String(maxFps);
-        const bitrate = parseInt(message.bitrate); if (!isNaN(bitrate) && bitrate > 0) runOptions.video_bit_rate = String(bitrate);
-        const audioEnabled = message.enableAudio || false; runOptions.audio = String(audioEnabled);
-        const videoEnabled = !(message.video === false || message.video === 'false'); runOptions.video = String(videoEnabled);
-        const controlEnabled = message.enableControl || false; runOptions.control = String(controlEnabled);
+        const runOptions = {
+            ...BASE_SCRCPY_OPTIONS
+        };
+        const maxSize = parseInt(message.maxSize);
+        if (!isNaN(maxSize) && maxSize > 0) runOptions.max_size = String(maxSize);
+        const maxFps = parseInt(message.maxFps);
+        if (!isNaN(maxFps) && maxFps > 0) runOptions.max_fps = String(maxFps);
+        const bitrate = parseInt(message.bitrate);
+        if (!isNaN(bitrate) && bitrate > 0) runOptions.video_bit_rate = String(bitrate);
+        const audioEnabled = message.enableAudio || false;
+        runOptions.audio = String(audioEnabled);
+        const videoEnabled = !(message.video === false || message.video === 'false');
+        runOptions.video = String(videoEnabled);
+        const controlEnabled = message.enableControl || false;
+        runOptions.control = String(controlEnabled);
 
         scid = (crypto.randomBytes(4).readUInt32BE(0) & 0x7FFFFFFF).toString(16).padStart(8, '0');
         const port = SERVER_PORT_BASE + (sessions.size % 1000);
@@ -247,17 +332,26 @@ async function handleStart(clientId, ws, message) {
 
     } catch (err) {
         log(LogLevel.ERROR, `[HandleStart ${clientId}] Critical error during setup: ${err.message}`);
-        ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Setup failed: ${err.message}` }));
+        ws.send(JSON.stringify({
+            type: MESSAGE_TYPES.ERROR,
+            message: `Setup failed: ${err.message}`
+        }));
         const clientData = wsClients.get(clientId);
-        if (clientData?.session) { await cleanupSession(clientData.session); clientData.session = null; }
-        else if (scid && sessions.has(scid)) { await cleanupSession(scid); }
+        if (clientData?.session) {
+            await cleanupSession(clientData.session);
+            clientData.session = null;
+        } else if (scid && sessions.has(scid)) {
+            await cleanupSession(scid);
+        }
     }
 }
 
 async function checkReverseTunnelExists(deviceId, tunnelString) {
     log(LogLevel.DEBUG, `[Exec] Checking reverse tunnel: ${tunnelString} for device ${deviceId}`);
     try {
-        const { stdout } = await executeCommand(`adb -s ${deviceId} reverse --list`, `List reverse tunnels (Device: ${deviceId})`);
+        const {
+            stdout
+        } = await executeCommand(`adb -s ${deviceId} reverse --list`, `List reverse tunnels (Device: ${deviceId})`);
         const exists = stdout.includes(tunnelString);
         log(LogLevel.DEBUG, `[Exec] Reverse tunnel ${tunnelString} ${exists ? 'exists' : 'does not exist'}`);
         return exists;
@@ -270,10 +364,20 @@ async function checkReverseTunnelExists(deviceId, tunnelString) {
 async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
     log(LogLevel.INFO, `[Session ${scid}] Starting setup process...`);
     const session = {
-        deviceId, scid, port, clientId, options: runOptions,
-        tcpServer: null, processStream: null, tunnelActive: false,
-        videoSocket: null, audioSocket: null, controlSocket: null,
-        deviceNameReceived: false, expectedSockets: [], socketsConnected: 0,
+        deviceId,
+        scid,
+        port,
+        clientId,
+        options: runOptions,
+        tcpServer: null,
+        processStream: null,
+        tunnelActive: false,
+        videoSocket: null,
+        audioSocket: null,
+        controlSocket: null,
+        deviceNameReceived: false,
+        expectedSockets: [],
+        socketsConnected: 0,
         streamingStartedNotified: false,
         unidentifiedSockets: new Map(),
         audioMetadata: null,
@@ -305,8 +409,14 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
 
         session.tcpServer = createTcpServer(scid);
         await new Promise((resolve, reject) => {
-            session.tcpServer.listen(port, '127.0.0.1', () => { log(LogLevel.INFO, `[Session ${scid}] TCP server listening.`); resolve(); });
-            session.tcpServer.once('error', (err) => { log(LogLevel.ERROR, `[Session ${scid}] TCP server listen error: ${err.message}`); reject(err); });
+            session.tcpServer.listen(port, '127.0.0.1', () => {
+                log(LogLevel.INFO, `[Session ${scid}] TCP server listening.`);
+                resolve();
+            });
+            session.tcpServer.once('error', (err) => {
+                log(LogLevel.ERROR, `[Session ${scid}] TCP server listen error: ${err.message}`);
+                reject(err);
+            });
         });
 
         const args = [SCRCPY_VERSION, `scid=${scid}`, `log_level=${runOptions.log_level}`];
@@ -327,10 +437,17 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
 
         session.processStream.stdout.on('data', (data) => log(LogLevel.INFO, `[scrcpy-server ${scid} stdout] ${data.toString().trim()}`));
         session.processStream.stderr.on('data', (data) => log(LogLevel.WARN, `[scrcpy-server ${scid} stderr] ${data.toString().trim()}`));
-        session.processStream.on('error', (err) => { log(LogLevel.ERROR, `[Session ${scid}] scrcpy-server process error: ${err.message}`); cleanupSession(scid); });
+        session.processStream.on('error', (err) => {
+            log(LogLevel.ERROR, `[Session ${scid}] scrcpy-server process error: ${err.message}`);
+            cleanupSession(scid);
+        });
         session.processStream.on('exit', (code, signal) => {
-            if (sessions.has(scid)) { log(LogLevel.WARN, `[Session ${scid}] scrcpy-server exited unexpectedly (code: ${code}, signal: ${signal}). Cleaning up.`); cleanupSession(scid); }
-            else { log(LogLevel.DEBUG, `[Session ${scid}] scrcpy-server exited after cleanup (code: ${code}, signal: ${signal}).`); }
+            if (sessions.has(scid)) {
+                log(LogLevel.WARN, `[Session ${scid}] scrcpy-server exited unexpectedly (code: ${code}, signal: ${signal}). Cleaning up.`);
+                cleanupSession(scid);
+            } else {
+                log(LogLevel.DEBUG, `[Session ${scid}] scrcpy-server exited after cleanup (code: ${code}, signal: ${signal}).`);
+            }
         });
         log(LogLevel.INFO, `[Session ${scid}] scrcpy-server process initiated.`);
 
@@ -347,7 +464,10 @@ async function handleDisconnect(clientId) {
     const scidToClean = client.session;
     client.session = null;
     if (client.ws?.readyState === WebSocket.OPEN) {
-        client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming stopped' }));
+        client.ws.send(JSON.stringify({
+            type: MESSAGE_TYPES.STATUS,
+            message: 'Streaming stopped'
+        }));
         client.ws.close(1000, 'User disconnected via command');
     }
     wsClients.delete(clientId);
@@ -363,17 +483,36 @@ async function cleanupSession(scid) {
     log(LogLevel.INFO, `[Cleanup ${scid}] Starting cleanup...`);
     sessions.delete(scid);
 
-    const { deviceId, tcpServer, processStream, videoSocket, audioSocket, controlSocket, clientId, unidentifiedSockets } = session;
+    const {
+        deviceId,
+        tcpServer,
+        processStream,
+        videoSocket,
+        audioSocket,
+        controlSocket,
+        clientId,
+        unidentifiedSockets
+    } = session;
 
     unidentifiedSockets?.forEach(sock => sock.destroy());
-    videoSocket?.destroy(); audioSocket?.destroy(); controlSocket?.destroy();
+    videoSocket?.destroy();
+    audioSocket?.destroy();
+    controlSocket?.destroy();
 
-    if (processStream && !processStream.killed) { processStream.kill('SIGKILL'); log(LogLevel.INFO, `[Cleanup ${scid}] Killed scrcpy-server process.`); }
-    if (tcpServer) { await new Promise(resolve => tcpServer.close(resolve)); log(LogLevel.INFO, `[Cleanup ${scid}] TCP server closed.`); }
+    if (processStream && !processStream.killed) {
+        processStream.kill('SIGKILL');
+        log(LogLevel.INFO, `[Cleanup ${scid}] Killed scrcpy-server process.`);
+    }
+    if (tcpServer) {
+        await new Promise(resolve => tcpServer.close(resolve));
+        log(LogLevel.INFO, `[Cleanup ${scid}] TCP server closed.`);
+    }
 
     const worker = workers.get(scid);
     if (worker) {
-        worker.postMessage({ type: 'stop' });
+        worker.postMessage({
+            type: 'stop'
+        });
         workers.delete(scid);
         log(LogLevel.INFO, `[Cleanup ${scid}] Worker terminated.`);
     }
@@ -382,7 +521,10 @@ async function cleanupSession(scid) {
     if (client) {
         if (client.session === scid) client.session = null;
         if (client.ws?.readyState === WebSocket.OPEN) {
-            client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming stopped by server cleanup' }));
+            client.ws.send(JSON.stringify({
+                type: MESSAGE_TYPES.STATUS,
+                message: 'Streaming stopped by server cleanup'
+            }));
         }
     }
     log(LogLevel.INFO, `[Cleanup ${scid}] Cleanup finished.`);
@@ -392,7 +534,11 @@ function createTcpServer(scid) {
     const server = net.createServer((socket) => {
         const remoteId = `${socket.remoteAddress}:${socket.remotePort}`;
         const session = sessions.get(scid);
-        if (!session) { log(LogLevel.WARN, `[TCP Server ${scid}] Connection from ${remoteId} but session gone.`); socket.destroy(); return; }
+        if (!session) {
+            log(LogLevel.WARN, `[TCP Server ${scid}] Connection from ${remoteId} but session gone.`);
+            socket.destroy();
+            return;
+        }
 
         if (session.socketsConnected >= session.expectedSockets.length) {
             log(LogLevel.ERROR, `[TCP Server ${scid}] Unexpected extra connection from ${remoteId}. Max ${session.expectedSockets.length} expected. Closing.`);
@@ -405,7 +551,10 @@ function createTcpServer(scid) {
 
         socket.scid = scid;
         socket.remoteId = remoteId;
-        socket.dynamicBuffer = { buffer: Buffer.alloc(1024 * 512), length: 0 };
+        socket.dynamicBuffer = {
+            buffer: Buffer.alloc(1024 * 512),
+            length: 0
+        };
         socket.state = 'AWAITING_INITIAL_DATA';
         socket.type = 'unknown';
         socket.didHandleDeviceName = false;
@@ -414,7 +563,10 @@ function createTcpServer(scid) {
 
         socket.on('data', (data) => {
             const currentSession = sessions.get(scid);
-            if (!currentSession) { socket.destroy(); return; }
+            if (!currentSession) {
+                socket.destroy();
+                return;
+            }
             log(LogLevel.DEBUG, `[TCP Socket ${remoteId} (${socket.type})] Received ${data.length} bytes.`);
             processData(socket, data);
         });
@@ -455,9 +607,16 @@ function clearSocketReference(scid, socket) {
     const session = sessions.get(scid);
     if (!session) return;
     let clearedType = 'unknown';
-    if (session.videoSocket === socket) { session.videoSocket = null; clearedType = 'video'; }
-    else if (session.audioSocket === socket) { session.audioSocket = null; clearedType = 'audio'; }
-    else if (session.controlSocket === socket) { session.controlSocket = null; clearedType = 'control'; }
+    if (session.videoSocket === socket) {
+        session.videoSocket = null;
+        clearedType = 'video';
+    } else if (session.audioSocket === socket) {
+        session.audioSocket = null;
+        clearedType = 'audio';
+    } else if (session.controlSocket === socket) {
+        session.controlSocket = null;
+        clearedType = 'control';
+    }
 
     log(LogLevel.DEBUG, `[Session ${scid}] Cleared reference for socket ${socket.remoteId} (${clearedType})`);
     if (!session.videoSocket && !session.audioSocket && !session.controlSocket && session.processStream) {
@@ -470,7 +629,8 @@ function processData(socket, data) {
     const session = sessions.get(socket.scid);
     const client = session ? wsClients.get(session.clientId) : null;
     if (!session || !client || client.ws?.readyState !== WebSocket.OPEN) {
-        if (!socket.destroyed) socket.destroy(); return;
+        if (!socket.destroyed) socket.destroy();
+        return;
     }
 
     const dynBuffer = socket.dynamicBuffer;
@@ -479,12 +639,14 @@ function processData(socket, data) {
         const newSize = Math.max(dynBuffer.buffer.length * 2, requiredLength + 1024);
         log(LogLevel.DEBUG, `[Buffer ${socket.remoteId}] Resizing buffer from ${dynBuffer.buffer.length} to ${newSize}`);
         try {
-            const newBuffer = Buffer.alloc(newSize);
+            const newBuffer = Buffer.allocUnsafe(newSize);
             dynBuffer.buffer.copy(newBuffer, 0, 0, dynBuffer.length);
             dynBuffer.buffer = newBuffer;
         } catch (e) {
             log(LogLevel.ERROR, `[Buffer ${socket.remoteId}] Failed to allocate ${newSize} bytes: ${e.message}. Closing.`);
-            socket.destroy(); cleanupSession(socket.scid); return;
+            socket.destroy();
+            cleanupSession(socket.scid);
+            return;
         }
     }
     data.copy(dynBuffer.buffer, dynBuffer.length);
@@ -493,7 +655,9 @@ function processData(socket, data) {
     processSingleSocket(socket, client, session);
 
     if (dynBuffer.length === 0 && dynBuffer.buffer.length > 1024 * 512) {
-        try { dynBuffer.buffer = Buffer.alloc(1024 * 512); } catch (e) {}
+        try {
+            dynBuffer.buffer = Buffer.alloc(1024 * 512);
+        } catch (e) {}
     }
 }
 
@@ -508,7 +672,10 @@ async function checkAndSendStreamingStarted(session, client) {
 
     if (videoReady && audioReady && controlReady) {
         log(LogLevel.INFO, `[Session ${session.scid}] All expected sockets identified. Sending 'Streaming started' status.`);
-        client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.STATUS, message: 'Streaming started' }));
+        client.ws.send(JSON.stringify({
+            type: MESSAGE_TYPES.STATUS,
+            message: 'Streaming started'
+        }));
         session.streamingStartedNotified = true;
 
         if (session.tunnelActive && session.deviceId) {
@@ -552,26 +719,45 @@ function attemptIdentifyControlByDeduction(session, client) {
         remainingSocket.state = 'STREAMING';
         session.unidentifiedSockets.delete(remainingSocketId);
 
-		const worker = new Worker(path.join(__dirname, 'serverControlWorker.js'), {
-			workerData: { scid: session.scid, clientId: session.clientId, CURRENT_LOG_LEVEL }
-		});
+        const worker = new Worker(path.join(__dirname, 'serverControlWorker.js'), {
+            workerData: {
+                scid: session.scid,
+                clientId: session.clientId,
+                CURRENT_LOG_LEVEL
+            }
+        });
         workers.set(session.scid, worker);
 
         worker.on('message', (msg) => {
             if (msg.type === 'writeToSocket') {
                 const session = sessions.get(msg.scid);
-                if (session?.controlSocket && !session.controlSocket.destroyed) {
+                const client = session ? wsClients.get(session.clientId) : null;
+
+                if (session?.controlSocket && !session.controlSocket.destroyed && client?.ws?.readyState === WebSocket.OPEN) {
                     try {
+                        // --- CHANGE THIS LINE ---
                         session.controlSocket.write(Buffer.from(msg.data, 'base64'));
-                        log(LogLevel.DEBUG, `[Worker ${msg.scid}] Wrote ${msg.data.length} bytes to control socket`);
+                        log(LogLevel.DEBUG, `[Worker ${msg.scid}] Wrote ${msg.data.length} base64 chars worth of data to control socket`);
                     } catch (e) {
                         log(LogLevel.ERROR, `[Worker ${msg.scid}] Control socket write error: ${e.message}`);
-                        client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${e.message}` }));
+
+                        if (client?.ws?.readyState === WebSocket.OPEN) {
+                            client.ws.send(JSON.stringify({
+                                type: MESSAGE_TYPES.ERROR,
+                                scid: msg.scid,
+                                message: `Control error: ${e.message}`
+                            }));
+                        }
                     }
+                } else {
+                    log(LogLevel.WARN, `[Worker ${msg.scid}] Cannot write to control socket. Session or socket gone, or client disconnected.`);
                 }
             } else if (msg.type === 'error') {
                 log(LogLevel.ERROR, `[Worker ${msg.scid}] Control processing error: ${msg.error}`);
-                client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${msg.error}` }));
+                client.ws.send(JSON.stringify({
+                    type: MESSAGE_TYPES.ERROR,
+                    message: `Control error: ${msg.error}`
+                }));
             }
         });
 
@@ -613,7 +799,10 @@ function processSingleSocket(socket, client, session) {
                         const deviceNameBuffer = dynBuffer.buffer.subarray(0, DEVICE_NAME_LENGTH);
                         const deviceName = deviceNameBuffer.toString('utf8').split('\0')[0];
                         log(LogLevel.INFO, `[Session ${session.scid}] Received Device Name: "${deviceName}" (on socket ${socket.remoteId})`);
-                        client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.DEVICE_NAME, name: deviceName }));
+                        client.ws.send(JSON.stringify({
+                            type: MESSAGE_TYPES.DEVICE_NAME,
+                            name: deviceName
+                        }));
                         dynBuffer.buffer.copy(dynBuffer.buffer, 0, DEVICE_NAME_LENGTH, dynBuffer.length);
                         dynBuffer.length -= DEVICE_NAME_LENGTH;
                         session.deviceNameReceived = true;
@@ -646,7 +835,12 @@ function processSingleSocket(socket, client, session) {
                             socket.type = 'video';
                             identifiedThisPass = true;
                             session.unidentifiedSockets?.delete(socket.remoteId);
-                            client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.VIDEO_INFO, codecId: potentialCodecId, width, height }));
+                            client.ws.send(JSON.stringify({
+                                type: MESSAGE_TYPES.VIDEO_INFO,
+                                codecId: potentialCodecId,
+                                width,
+                                height
+                            }));
                             dynBuffer.buffer.copy(dynBuffer.buffer, 0, VIDEO_METADATA_LENGTH, dynBuffer.length);
                             dynBuffer.length -= VIDEO_METADATA_LENGTH;
                             socket.state = 'STREAMING';
@@ -669,7 +863,10 @@ function processSingleSocket(socket, client, session) {
                             socket.codecProcessed = true;
                             identifiedThisPass = true;
                             session.unidentifiedSockets?.delete(socket.remoteId);
-                            client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.AUDIO_INFO, codecId: potentialCodecId }));
+                            client.ws.send(JSON.stringify({
+                                type: MESSAGE_TYPES.AUDIO_INFO,
+                                codecId: potentialCodecId
+                            }));
                             dynBuffer.buffer.copy(dynBuffer.buffer, 0, AUDIO_METADATA_LENGTH, dynBuffer.length);
                             dynBuffer.length -= AUDIO_METADATA_LENGTH;
                             socket.state = 'STREAMING';
@@ -692,7 +889,10 @@ function processSingleSocket(socket, client, session) {
 
                     // Initialize worker thread for control messages
                     const worker = new Worker(path.join(__dirname, 'controlWorker.js'), {
-                        workerData: { scid: session.scid, clientId: session.clientId }
+                        workerData: {
+                            scid: session.scid,
+                            clientId: session.clientId
+                        }
                     });
                     workers.set(session.scid, worker);
 
@@ -705,12 +905,18 @@ function processSingleSocket(socket, client, session) {
                                     log(LogLevel.DEBUG, `[Worker ${msg.scid}] Wrote ${msg.data.length} bytes to control socket`);
                                 } catch (e) {
                                     log(LogLevel.ERROR, `[Worker ${msg.scid}] Control socket write error: ${e.message}`);
-                                    client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${e.message}` }));
+                                    client.ws.send(JSON.stringify({
+                                        type: MESSAGE_TYPES.ERROR,
+                                        message: `Control error: ${e.message}`
+                                    }));
                                 }
                             }
                         } else if (msg.type === 'error') {
                             log(LogLevel.ERROR, `[Worker ${msg.scid}] Control processing error: ${msg.error}`);
-                            client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ERROR, message: `Control error: ${msg.error}` }));
+                            client.ws.send(JSON.stringify({
+                                type: MESSAGE_TYPES.ERROR,
+                                message: `Control error: ${msg.error}`
+                            }));
                         }
                     });
 
@@ -743,31 +949,54 @@ function processSingleSocket(socket, client, session) {
                 break;
 
             case 'STREAMING':
-                if (!socket.type || socket.type === 'unknown') { log(LogLevel.WARN, `[Streaming ${socket.remoteId}] Socket in STREAMING state but type unknown? Resetting.`); socket.state = 'AWAITING_METADATA'; keepProcessing = true; break; }
+                if (!socket.type || socket.type === 'unknown') {
+                    log(LogLevel.WARN, `[Streaming ${socket.remoteId}] Socket in STREAMING state but type unknown? Resetting.`);
+                    socket.state = 'AWAITING_METADATA';
+                    keepProcessing = true;
+                    break;
+                }
 
                 if (socket.type === 'video') {
                     if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
                         const packetSize = dynBuffer.buffer.readUInt32BE(8);
-                        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) { log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`); socket.state = 'UNKNOWN'; socket.destroy(); return; }
+                        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
+                            log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`);
+                            socket.state = 'UNKNOWN';
+                            socket.destroy();
+                            return;
+                        }
                         const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
                         if (dynBuffer.length >= totalPacketLength) {
                             const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
                             const typeBuffer = Buffer.alloc(1);
                             typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
                             log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending video packet (${payload.length} bytes)`);
-                            client.ws.send(Buffer.concat([typeBuffer, payload]), { binary: true });
+                            client.ws.send(Buffer.concat([typeBuffer, payload]), {
+                                binary: true
+                            });
                             dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
                             dynBuffer.length -= totalPacketLength;
                             processedSomething = true;
                             keepProcessing = true;
-                        } else { log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`); keepProcessing = false; }
-                    } else { log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`); keepProcessing = false; }
+                        } else {
+                            log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`);
+                            keepProcessing = false;
+                        }
+                    } else {
+                        log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`);
+                        keepProcessing = false;
+                    }
                 } else if (socket.type === 'audio') {
                     if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
                         const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
                         const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
                         const packetSize = dynBuffer.buffer.readUInt32BE(8);
-                        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) { log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`); socket.state = 'UNKNOWN'; socket.destroy(); return; }
+                        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
+                            log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`);
+                            socket.state = 'UNKNOWN';
+                            socket.destroy();
+                            return;
+                        }
                         const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
                         if (dynBuffer.length >= totalPacketLength) {
                             const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
@@ -776,7 +1005,11 @@ function processSingleSocket(socket, client, session) {
                                 try {
                                     session.audioMetadata = parseAudioSpecificConfig(payload);
                                     log(LogLevel.INFO, `[Session ${session.scid}] AAC Metadata: ${JSON.stringify(session.audioMetadata)}`);
-                                    client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.AUDIO_INFO, codecId: CODEC_IDS.AAC, metadata: session.audioMetadata }));
+                                    client.ws.send(JSON.stringify({
+                                        type: MESSAGE_TYPES.AUDIO_INFO,
+                                        codecId: CODEC_IDS.AAC,
+                                        metadata: session.audioMetadata
+                                    }));
                                 } catch (e) {
                                     log(LogLevel.ERROR, `[Session ${session.scid}] Failed to parse ASC: ${e.message}`);
                                     socket.destroy();
@@ -790,15 +1023,23 @@ function processSingleSocket(socket, client, session) {
                                 const typeBuffer = Buffer.alloc(1);
                                 typeBuffer.writeUInt8(BINARY_TYPES.AUDIO, 0);
                                 log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending audio packet (${adtsFrame.length} bytes, PTS: ${pts})`);
-                                client.ws.send(Buffer.concat([typeBuffer, adtsFrame]), { binary: true });
+                                client.ws.send(Buffer.concat([typeBuffer, adtsFrame]), {
+                                    binary: true
+                                });
                             }
 
                             dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
                             dynBuffer.length -= totalPacketLength;
                             processedSomething = true;
                             keepProcessing = true;
-                        } else { log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`); keepProcessing = false; }
-                    } else { log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`); keepProcessing = false; }
+                        } else {
+                            log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`);
+                            keepProcessing = false;
+                        }
+                    } else {
+                        log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`);
+                        keepProcessing = false;
+                    }
                 } else if (socket.type === 'control') {
                     if (dynBuffer.length > 0) {
                         log(LogLevel.DEBUG, `[Streaming ${socket.remoteId} - Control] Forwarding ${dynBuffer.length} bytes from device to WS Client ${session.clientId}`);
@@ -837,7 +1078,10 @@ async function gracefulShutdown(wss, httpServer) {
     await Promise.all([closeWss, closeHttp]);
     log(LogLevel.INFO, '[Shutdown] Servers closed. Exiting.');
     process.exit(0);
-    setTimeout(() => { log(LogLevel.ERROR, "[Shutdown] Timeout. Forcing exit."); process.exit(1); }, 5000);
+    setTimeout(() => {
+        log(LogLevel.ERROR, "[Shutdown] Timeout. Forcing exit.");
+        process.exit(1);
+    }, 5000);
 }
 
 async function start() {
@@ -848,12 +1092,24 @@ async function start() {
         wss = createWebSocketServer();
         const app = express();
         app.use(express.static(path.join(__dirname, 'public')));
-        httpServer = app.listen(HTTP_PORT, () => { log(LogLevel.INFO, `[System] HTTP server listening on port ${HTTP_PORT}`); log(LogLevel.INFO, `[System] Access UI at http://localhost:${HTTP_PORT}`); });
-        httpServer.on('error', (err) => { log(LogLevel.ERROR, `[System] HTTP server failed start: ${err.message}`); process.exit(1); });
+        httpServer = app.listen(HTTP_PORT, () => {
+            log(LogLevel.INFO, `[System] HTTP server listening on port ${HTTP_PORT}`);
+            log(LogLevel.INFO, `[System] Access UI at http://localhost:${HTTP_PORT}`);
+        });
+        httpServer.on('error', (err) => {
+            log(LogLevel.ERROR, `[System] HTTP server failed start: ${err.message}`);
+            process.exit(1);
+        });
         process.on('SIGINT', () => gracefulShutdown(wss, httpServer));
         process.on('SIGTERM', () => gracefulShutdown(wss, httpServer));
-        process.on('uncaughtException', (err, origin) => { log(LogLevel.ERROR, `[FATAL] Uncaught Exception at: ${origin}`, err); process.exit(1); });
-        process.on('unhandledRejection', (reason, promise) => { log(LogLevel.ERROR, '[FATAL] Unhandled Rejection at:', promise, 'reason:', reason); process.exit(1); });
+        process.on('uncaughtException', (err, origin) => {
+            log(LogLevel.ERROR, `[FATAL] Uncaught Exception at: ${origin}`, err);
+            process.exit(1);
+        });
+        process.on('unhandledRejection', (reason, promise) => {
+            log(LogLevel.ERROR, '[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+            process.exit(1);
+        });
     } catch (error) {
         log(LogLevel.ERROR, `[FATAL] Failed to start server: ${error.message}`);
         process.exit(1);

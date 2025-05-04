@@ -1,55 +1,52 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scrcpy Desktop</title>
-    <link rel="stylesheet" href="style.css"> </head>
-<body data-theme="dark">
-    <header>
-        <h1>Scrcpy Desktop</h1>
-        <button id="themeToggle">Switch Theme</button>
-    </header>
-
-    <div id="streamArea">
-        <div id="videoPlaceholder">Waiting for stream...</div>
-        <video id="screen" autoplay disablePictureInPicture></video>
-		<div id="videoBorder"></div>
-    </div>
-	
-    <div class="controls">
-        <div class="settings">
-            <div class="setting">
-                <label for="maxSize">Max Size (px)</label>
-                <input type="number" id="maxSize" value="0" min="0" step="10">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Scrcpy Desktop</title>
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body data-theme="dark">
+        <header>
+            <h1>Scrcpy Desktop</h1>
+            <button id="themeToggle">Switch Theme</button>
+        </header>
+        <div id="streamArea">
+            <div id="videoPlaceholder">Waiting for stream...</div>
+            <video id="screen" autoplay disablePictureInPicture></video>
+            <div id="videoBorder"></div>
+        </div>
+        <div class="controls">
+            <div class="settings">
+                <div class="setting">
+                    <label for="maxSize">Max Size (px)</label>
+                    <input type="number" id="maxSize" value="0" min="0" step="10">
+                </div>
+                <div class="setting">
+                    <label for="maxFps">Max FPS</label>
+                    <input type="number" id="maxFps" value="60" min="0" max="120" step="1">
+                </div>
+                <div class="setting">
+                    <label for="bitrate">Bitrate (Mbps)</label>
+                    <input type="number" id="bitrate" value="8" min="1" step="1">
+                </div>
+                <div class="setting">
+                    <label for="enableAudio">Enable Audio</label>
+                    <input type="checkbox" id="enableAudio">
+                </div>
+                <div class="setting">
+                    <label for="enableControl">Enable Control</label>
+                    <input type="checkbox" id="enableControl" checked>
+                </div>
             </div>
-            <div class="setting">
-                <label for="maxFps">Max FPS</label>
-                <input type="number" id="maxFps" value="60" min="0" max="120" step="1">
-            </div>
-            <div class="setting">
-                <label for="bitrate">Bitrate (Mbps)</label>
-                <input type="number" id="bitrate" value="8" min="1" step="1">
-            </div>
-            <div class="setting">
-                <label for="enableAudio">Enable Audio</label>
-                <input type="checkbox" id="enableAudio">
-            </div>
-            <div class="setting">
-                <label for="enableControl">Enable Control</label>
-                <input type="checkbox" id="enableControl" checked>
+            <div class="buttons">
+                <button id="startBtn">Start Stream</button>
+                <button id="stopBtn" disabled>Stop Stream</button>
+                <button id="fullscreenBtn">Fullscreen</button>
+                <button id="flipOrientationBtn" disabled>Flip Orientation</button> <!-- ADD THIS -->
             </div>
         </div>
-        <div class="buttons">
-            <button id="startBtn">Start Stream</button>
-            <button id="stopBtn" disabled>Stop Stream</button>
-            <button id="fullscreenBtn">Fullscreen</button>
-			<button id="flipOrientationBtn" disabled>Flip Orientation</button> <!-- ADD THIS -->
-        </div>
-    </div>
-    <div id="status">Ready</div>
-	
-
-    <script src="/main.js"></script>
-</body>
+        <div id="status">Ready</div>
+        <script src="/main.js"></script>
+    </body>
 </html>
