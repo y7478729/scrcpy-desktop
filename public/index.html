@@ -19,17 +19,63 @@
             <div class="custom-taskbar">
                  <div class="taskbar-main-content">
                     <div class="taskbar-left">
-                        <button class="nav-button back-button" aria-label="Back">←</button>
-                        <button class="nav-button home-button" aria-label="Home">🏠</button>
-                        <button class="nav-button recents-button" aria-label="Recents">☰</button>
+                        <button class="nav-button back-button">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="15 6 9 12 15 18"/>
+                            </svg>
+                        </button>
+                        <button class="nav-button home-button">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="7" y="7" width="10" height="10" rx="2" ry="2"/>
+                            </svg>
+                        </button>
+                        <button class="nav-button recents-button">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="7" y1="6" x2="7" y2="18"/>
+                                <line x1="12" y1="6" x2="12" y2="18"/>
+                                <line x1="17" y1="6" x2="17" y2="18"/>
+                            </svg>
+                        </button>
                     </div>
                     <div class="taskbar-right-main">
-                         <button id="speakerButton" class="icon-button" aria-label="Audio Settings">🔊</button>
-                         <button id="quickSettingsTrigger" class="quick-settings-trigger" aria-label="Quick Settings">
-                             <span class="icon wifi-indicator">📶</span>
-                             <span class="icon battery-indicator">🔋 <span id="batteryLevel">63</span>%</span>
-                             <span class="clock">19:57</span>
-                         </button>
+                        <button id="speakerButton" class="icon-button" aria-label="Audio Settings">
+                            <svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5,9 9,9 13,5 13,19 9,15 5,15" />
+                                <path d="M15 9c1.5 1 1.5 5 0 6" />
+                            </svg>
+                            <svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5,9 9,9 13,5 13,19 9,15 5,15" />
+                                <line x1="16" y1="8" x2="20" y2="16" />
+                                <line x1="20" y1="8" x2="16" y2="16" />
+                            </svg>
+                        </button>
+                        <button id="quickSettingsTrigger" class="quick-settings-trigger" aria-label="Quick Settings">
+                            <span class="icon wifi-indicator">
+								<svg class="wifi-icon wifion" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+								  <path d="M2 8c5.5-5.5 14.5-5.5 20 0"/>
+								  <path d="M5.5 11.5c3.5-3.5 9.5-3.5 13 0"/>
+								  <path d="M9 15c1.5-1.5 4.5-1.5 6 0"/>
+								  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+								</svg>
+								<svg class="wifi-icon wifioff hidden" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+								  <path d="M2 8c5.5-5.5 14.5-5.5 20 0"/>
+								  <path d="M5.5 11.5c3.5-3.5 9.5-3.5 13 0"/>
+								  <path d="M9 15c1.5-1.5 4.5-1.5 6 0"/>
+								  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+								  <line x1="3" y1="3" x2="21" y2="21" stroke="red"/>
+								</svg>
+                            </span>
+                            <span class="icon battery-indicator">
+								<span id="batteryLevel">69</span>%
+								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+								<!--Top Tip (Centered)-->
+								  <rect x="10.25" y="2.0" width="3.5" height="2" rx="0.25" ry="0.25" stroke="currentColor" fill="none"/>
+								<!--Battery Body-->
+								  <rect x="7" y="4" width="10" height="19" fill="currentColor" rx="2" ry="2"/>
+								</svg>
+                            </span>
+                            <span class="clock">19:57</span>
+                        </button>
                     </div>
                 </div>
                  <div class="taskbar-pin-area">
@@ -40,7 +86,17 @@
             <div id="audioPanel" class="quick-panel">
                 <div class="panel-content">
                     <div class="slider-group">
-                        <span class="icon">🔊</span>
+                        <span class="icon">
+                            <svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5,9 9,9 13,5 13,19 9,15 5,15" />
+                                <path d="M15 9c1.5 1 1.5 5 0 6" />
+                            </svg>
+                            <svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5,9 9,9 13,5 13,19 9,15 5,15" />
+                                <line x1="16" y1="8" x2="20" y2="16" />
+                                <line x1="20" y1="8" x2="16" y2="16" />
+                            </svg>
+                        </span>
                         <label for="mediaVolume">Media</label>
                         <input type="range" id="mediaVolume" name="mediaVolume" min="0" max="100" value="75">
                     </div>
@@ -53,10 +109,24 @@
                  </div>
                 <div class="panel-grid">
                      <button id="wifiToggleBtn" class="panel-toggle-button active" aria-pressed="true">
-                         <span class="icon">📶</span>
+                         <span class="icon">
+							<svg class="wifi-icon wifion" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+							  <path d="M2 8c5.5-5.5 14.5-5.5 20 0"/>
+							  <path d="M5.5 11.5c3.5-3.5 9.5-3.5 13 0"/>
+							  <path d="M9 15c1.5-1.5 4.5-1.5 6 0"/>
+							  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+							</svg>
+							<svg class="wifi-icon wifioff hidden" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+							  <path d="M2 8c5.5-5.5 14.5-5.5 20 0"/>
+							  <path d="M5.5 11.5c3.5-3.5 9.5-3.5 13 0"/>
+							  <path d="M9 15c1.5-1.5 4.5-1.5 6 0"/>
+							  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+							  <line x1="3" y1="3" x2="21" y2="21" stroke="red"/>
+							</svg>
+                         </span>
                          <span>Wi-Fi</span>
                      </button>
-                      <button class="panel-toggle-button" disabled>
+                     <button class="panel-toggle-button" disabled>
                          <span class="icon">🔆</span>
                          <span>Brightness</span>
                      </button>
@@ -68,7 +138,7 @@
                          <span class="icon">✈️</span>
                          <span>Flight Mode</span>
                      </button>
-                      <button class="panel-toggle-button" disabled>
+                     <button class="panel-toggle-button" disabled>
                          <span class="icon">🔦</span>
                          <span>Torch</span>
                      </button>
@@ -76,7 +146,7 @@
                          <span class="icon">🌙</span>
                          <span>Dark Mode</span>
                      </button>
-                 </div>
+                </div>
             </div>
         </div>
         <div class="controls">

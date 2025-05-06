@@ -70,7 +70,7 @@ const adb = new adbkit.Client();
 const execPromise = util.promisify(exec);
 const sessions = new Map();
 const wsClients = new Map();
-const workers = new Map(); // Map<scid, Worker>
+const workers = new Map();
 
 const SAMPLE_RATE_MAP = {
     0: 96000,
@@ -223,6 +223,15 @@ function createWebSocketServer() {
 						case 'getVolume':
 							await handleGetVolumeCommand(clientId, ws, message);
 							break;
+						case 'navAction':
+							await handleNavAction(clientId, ws, message);
+							break;
+						case 'wifiToggle':
+							await handleWifiToggleCommand(clientId, ws, message);
+							break;
+						case 'getWifiStatus':
+							await handleGetWifiStatusCommand(clientId, ws, message);
+							break;							
                         default:
                             log(LogLevel.WARN, `[WebSocket] Unknown action from ${clientId}: ${message.action}`);
                             ws.send(JSON.stringify({
@@ -262,21 +271,19 @@ async function getMediaVolumeInfo(deviceId) {
         throw new Error(`No session found for device ${deviceId}`);
     }
 
-    // Get Android version
     let androidVersion;
     if (session.androidVersion) {
         androidVersion = session.androidVersion;
         log(LogLevel.DEBUG, `[VolumeInfo] Using cached Android version: ${androidVersion}`);
     } else {
         try {
-            const { stdout } = await executeCommand(
-                `adb -s ${deviceId} shell getprop ro.build.version.release`,
-                `Get Android version (Device: ${deviceId})`
-            );
-            const versionMatch = stdout.trim().match(/^(\d+)/);
+            const device = adb.getDevice(deviceId);
+            const versionStream = await device.shell('getprop ro.build.version.release');
+            const versionOutput = await streamToString(versionStream);
+            const versionMatch = versionOutput.trim().match(/^(\d+)/);
             androidVersion = versionMatch ? parseInt(versionMatch[1], 10) : NaN;
             if (isNaN(androidVersion)) {
-                throw new Error(`Invalid Android version: ${stdout.trim()}`);
+                throw new Error(`Invalid Android version: ${versionOutput.trim()}`);
             }
             session.androidVersion = androidVersion;
             log(LogLevel.DEBUG, `[VolumeInfo] Cached Android version: ${androidVersion}`);
@@ -285,61 +292,36 @@ async function getMediaVolumeInfo(deviceId) {
         }
     }
 
-    // Query volume info
     let maxVolume, currentVolume;
     if (session.maxVolume) {
         maxVolume = session.maxVolume;
         log(LogLevel.DEBUG, `[VolumeInfo] Using cached max volume: ${maxVolume}`);
     }
 
+    let command;
     if (androidVersion <= 10) {
-        try {
-            const { stdout, stderr } = await executeCommand(
-                `adb -s ${deviceId} shell media volume --get`,
-                `Get media volume (Device: ${deviceId})`
-            );
-            log(LogLevel.DEBUG, `[VolumeInfo] Raw media volume output: ${stdout}`);
-            if (stderr) {
-                log(LogLevel.WARN, `[VolumeInfo] Command stderr: ${stderr.trim()}`);
-            }
-            const match = stdout.match(/volume is (\d+) in range \[(\d+)\.\.(\d+)\]/);
-            if (!match) {
-                throw new Error(`Unexpected volume output format: ${stdout}`);
-            }
-            currentVolume = parseInt(match[1], 10);
-            if (!session.maxVolume) {
-                maxVolume = parseInt(match[3], 10);
-                session.maxVolume = maxVolume;
-                log(LogLevel.DEBUG, `[VolumeInfo] Cached max volume: ${maxVolume}`);
-            }
-        } catch (error) {
-            log(LogLevel.ERROR, `[VolumeInfo] Failed to query volume for Android 10 or lower: ${error.message}`);
-            throw new Error(`Failed to get volume: ${error.message}`);
-        }
+        command = 'media volume --get';
     } else {
-        try {
-            const { stdout, stderr } = await executeCommand(
-                `adb -s ${deviceId} shell cmd media_session volume --get --stream 3`,
-                `Get media volume (Device: ${deviceId})`
-            );
-            log(LogLevel.DEBUG, `[VolumeInfo] Raw media_session output: ${stdout}`);
-            if (stderr) {
-                log(LogLevel.WARN, `[VolumeInfo] Command stderr: ${stderr.trim()}`);
-            }
-            const match = stdout.match(/volume is (\d+) in range \[(\d+)\.\.(\d+)\]|\[(\d+), (\d+)\]/);
-            if (!match) {
-                throw new Error(`Unexpected volume output format: ${stdout}`);
-            }
-            currentVolume = parseInt(match[1] || match[4], 10);
-            if (!session.maxVolume) {
-                maxVolume = parseInt(match[3] || match[5], 10);
-                session.maxVolume = maxVolume;
-                log(LogLevel.DEBUG, `[VolumeInfo] Cached max volume: ${maxVolume}`);
-            }
-        } catch (error) {
-            log(LogLevel.ERROR, `[VolumeInfo] Failed to query volume for Android 11+: ${error.message}`);
-            throw new Error(`Failed to get volume: ${error.message}`);
+        command = 'cmd media_session volume --get --stream 3';
+    }
+
+    try {
+        const device = adb.getDevice(deviceId);
+        const volumeStream = await device.shell(command);
+        const volumeOutput = await streamToString(volumeStream);
+        log(LogLevel.DEBUG, `[VolumeInfo] Raw volume output: ${volumeOutput}`);
+        const match = volumeOutput.match(/volume is (\d+) in range \[(\d+)\.\.(\d+)\]|\[(\d+), (\d+)\]/);
+        if (!match) {
+            throw new Error(`Unexpected volume output format: ${volumeOutput}`);
         }
+        currentVolume = parseInt(match[1] || match[4], 10);
+        if (!session.maxVolume) {
+            maxVolume = parseInt(match[3] || match[5], 10);
+            session.maxVolume = maxVolume;
+            log(LogLevel.DEBUG, `[VolumeInfo] Cached max volume: ${maxVolume}`);
+        }
+    } catch (error) {
+        throw new Error(`Failed to get volume: ${error.message}`);
     }
 
     if (isNaN(maxVolume) || isNaN(currentVolume) || maxVolume < 1) {
@@ -372,7 +354,7 @@ async function setMediaVolume(deviceId, percentage) {
     }
 
     if (isNaN(maxVolume) || maxVolume < 1) {
-         throw new Error(`Invalid max volume info: ${maxVolume}`);
+        throw new Error(`Invalid max volume info: ${maxVolume}`);
     }
 
     const targetVolume = Math.round((percentage / 100) * maxVolume);
@@ -384,14 +366,12 @@ async function setMediaVolume(deviceId, percentage) {
     }
 
     try {
-        let command;
-        if (androidVersion <= 10) {
-            command = `adb -s ${deviceId} shell media volume --set ${targetVolume}`;
-        } else {
-            command = `adb -s ${deviceId} shell cmd media_session volume --set ${targetVolume}`;
-        }
-        await executeCommand(command, `Set media volume to ${targetVolume} (Device: ${deviceId})`);
-        log(LogLevel.INFO, `[SetVolume] Volume set command executed for ${percentage}% (Target Level: ${targetVolume})`);
+        const command = androidVersion <= 10
+            ? `media volume --set ${targetVolume}`
+            : `cmd media_session volume --set ${targetVolume} --stream 3`;
+        const device = adb.getDevice(deviceId);
+        await device.shell(command);
+        log(LogLevel.INFO, `[SetVolume] Volume set to ${percentage}% (Target Level: ${targetVolume})`);
     } catch (error) {
         log(LogLevel.ERROR, `[SetVolume] Failed to set volume: ${error.message}`);
         throw error;
@@ -471,33 +451,179 @@ async function handleVolumeCommand(clientId, ws, message) {
     }
 }
 
-async function executeCommand(command, description) {
-    log(LogLevel.DEBUG, `[Exec] Running: ${description} (${command})`);
-    try {
-        const {
-            stdout,
-            stderr
-        } = await execPromise(command);
-        if (stderr && !(description.includes('Remove') && stderr.includes('not found'))) {
-            log(LogLevel.WARN, `[Exec] Stderr (${description}): ${stderr.trim()}`);
-        } else if (stderr) {
-            log(LogLevel.DEBUG, `[Exec] Stderr (${description}): ${stderr.trim()} (Ignored)`);
-        }
-        if (stdout) {
-            log(LogLevel.DEBUG, `[Exec] Stdout (${description}): ${stdout.trim()}`);
-        }
-        log(LogLevel.DEBUG, `[Exec] Success: ${description}`);
-        return {
-            success: true,
-            stdout,
-            stderr
-        };
-    } catch (error) {
-        log(LogLevel.ERROR, `[Exec] Error (${description}): ${error.message}`);
-        if (error.stderr) log(LogLevel.ERROR, `[Exec] Stderr: ${error.stderr.trim()}`);
-        if (error.stdout) log(LogLevel.ERROR, `[Exec] Stdout: ${error.stdout.trim()}`);
-        throw new Error(`Failed to execute: ${description} - ${error.message}`);
+const navKeycodes = {
+    back: 4, // KEYCODE_BACK
+    home: 3, // KEYCODE_HOME
+    recents: 187 // KEYCODE_APP_SWITCH
+};
+
+async function handleNavAction(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client?.session) {
+        ws.send(JSON.stringify({ type: 'navResponse', success: false, key: message.key, error: 'No active session' }));
+        return;
     }
+
+    const session = sessions.get(client.session);
+    if (!session?.deviceId) {
+        ws.send(JSON.stringify({ type: 'navResponse', success: false, key: message.key, error: 'No device found' }));
+        return;
+    }
+
+    const keycode = navKeycodes[message.key];
+    if (!keycode) {
+        ws.send(JSON.stringify({ type: 'navResponse', success: false, key: message.key, error: 'Invalid navigation key' }));
+        return;
+    }
+
+    try {
+        const device = adb.getDevice(session.deviceId);
+        await device.shell(`input keyevent ${keycode}`);
+        ws.send(JSON.stringify({ type: 'navResponse', success: true, key: message.key }));
+    } catch (error) {
+        ws.send(JSON.stringify({ type: 'navResponse', success: false, key: message.key, error: error.message }));
+    }
+}
+
+async function handleWifiToggleCommand(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client || !client.session) {
+        log(LogLevel.WARN, `[WifiToggle ${clientId}] No active session for client`);
+        ws.send(JSON.stringify({
+            type: 'wifiResponse',
+            success: false,
+            error: 'No active session, cannot toggle Wi-Fi'
+        }));
+        return;
+    }
+
+    const session = sessions.get(client.session);
+    if (!session || !session.deviceId) {
+        log(LogLevel.WARN, `[WifiToggle ${clientId}] No device associated with session ${client.session}`);
+        ws.send(JSON.stringify({
+            type: 'wifiResponse',
+            success: false,
+            error: 'No device found, cannot toggle Wi-Fi'
+        }));
+        return;
+    }
+
+    const enableWifi = message.enable; // true to enable, false to disable
+    if (typeof enableWifi !== 'boolean') {
+        log(LogLevel.WARN, `[WifiToggle ${clientId}] Invalid enable value: ${enableWifi}`);
+        ws.send(JSON.stringify({
+            type: 'wifiResponse',
+            success: false,
+            error: 'Invalid Wi-Fi toggle value'
+        }));
+        return;
+    }
+
+    try {
+        const device = adb.getDevice(session.deviceId);
+        const command = enableWifi ? 'svc wifi enable' : 'svc wifi disable';
+        log(LogLevel.INFO, `[WifiToggle ${clientId}] Executing ADB command: ${command} on device ${session.deviceId}`);
+        await device.shell(command);
+
+        // Wait 4 seconds to allow the Wi-Fi state to stabilize
+        await new Promise(resolve => setTimeout(resolve, 6000));
+
+        // Verify the Wi-Fi state
+        const statusStream = await device.shell('dumpsys wifi | grep "Wi-Fi is"');
+        const statusOutput = await streamToString(statusStream);
+        const isWifiOn = statusOutput.includes('Wi-Fi is enabled');
+        log(LogLevel.INFO, `[WifiToggle ${clientId}] Wi-Fi state after toggle: ${isWifiOn ? 'enabled' : 'disabled'}`);
+
+        // Get the SSID
+        let ssid = null;
+        if (isWifiOn) {
+            const ssidStream = await device.shell('dumpsys netstats | grep -E \'iface=wlan.*networkId\'');
+            const ssidOutput = await streamToString(ssidStream);
+            const match = ssidOutput.match(/networkId="([^"]+)"/);
+            ssid = match ? match[1] : null;
+            log(LogLevel.INFO, `[WifiToggle ${clientId}] SSID: ${ssid || 'Not connected'}`);
+        }
+
+        ws.send(JSON.stringify({
+            type: 'wifiResponse',
+            success: true,
+            enable: enableWifi,
+            currentState: isWifiOn,
+            ssid: ssid
+        }));
+    } catch (error) {
+        log(LogLevel.ERROR, `[WifiToggle ${clientId}] Failed to toggle Wi-Fi: ${error.message}`);
+        ws.send(JSON.stringify({
+            type: 'wifiResponse',
+            success: false,
+            error: `Failed to toggle Wi-Fi: ${error.message}`
+        }));
+    }
+}
+
+async function handleGetWifiStatusCommand(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client || !client.session) {
+        log(LogLevel.WARN, `[GetWifiStatus ${clientId}] No active session for client`);
+        ws.send(JSON.stringify({
+            type: 'wifiStatus',
+            success: false,
+            error: 'No active session, cannot get Wi-Fi status'
+        }));
+        return;
+    }
+
+    const session = sessions.get(client.session);
+    if (!session || !session.deviceId) {
+        log(LogLevel.WARN, `[GetWifiStatus ${clientId}] No device associated with session ${client.session}`);
+        ws.send(JSON.stringify({
+            type: 'wifiStatus',
+            success: false,
+            error: 'No device found, cannot get Wi-Fi status'
+        }));
+        return;
+    }
+
+    try {
+        const device = adb.getDevice(session.deviceId);
+        const statusStream = await device.shell('dumpsys wifi | grep "Wi-Fi is"');
+        const statusOutput = await streamToString(statusStream);
+        const isWifiOn = statusOutput.includes('Wi-Fi is enabled');
+        log(LogLevel.INFO, `[GetWifiStatus ${clientId}] Wi-Fi state: ${isWifiOn ? 'enabled' : 'disabled'}`);
+
+        // Get the SSID
+        let ssid = null;
+        if (isWifiOn) {
+            const ssidStream = await device.shell('dumpsys netstats | grep -E \'iface=wlan.*networkId\'');
+            const ssidOutput = await streamToString(ssidStream);
+            const match = ssidOutput.match(/networkId="([^"]+)"/);
+            ssid = match ? match[1] : null;
+            log(LogLevel.INFO, `[GetWifiStatus ${clientId}] SSID: ${ssid || 'Not connected'}`);
+        }
+
+        ws.send(JSON.stringify({
+            type: 'wifiStatus',
+            success: true,
+            isWifiOn,
+            ssid
+        }));
+    } catch (error) {
+        log(LogLevel.ERROR, `[GetWifiStatus ${clientId}] Failed to get Wi-Fi status: ${error.message}`);
+        ws.send(JSON.stringify({
+            type: 'wifiStatus',
+            success: false,
+            error: `Failed to get Wi-Fi status: ${error.message}`
+        }));
+    }
+}
+
+function streamToString(stream) {
+    return new Promise((resolve, reject) => {
+        let output = '';
+        stream.on('data', (data) => output += data.toString());
+        stream.on('end', () => resolve(output));
+        stream.on('error', (err) => reject(err));
+    });
 }
 
 async function handleStart(clientId, ws, message) {
@@ -562,16 +688,16 @@ async function handleStart(clientId, ws, message) {
 }
 
 async function checkReverseTunnelExists(deviceId, tunnelString) {
-    log(LogLevel.DEBUG, `[Exec] Checking reverse tunnel: ${tunnelString} for device ${deviceId}`);
+    log(LogLevel.DEBUG, `[CheckTunnel] Checking reverse tunnel: ${tunnelString} for device ${deviceId}`);
     try {
-        const {
-            stdout
-        } = await executeCommand(`adb -s ${deviceId} reverse --list`, `List reverse tunnels (Device: ${deviceId})`);
-        const exists = stdout.includes(tunnelString);
-        log(LogLevel.DEBUG, `[Exec] Reverse tunnel ${tunnelString} ${exists ? 'exists' : 'does not exist'}`);
+        const device = adb.getDevice(deviceId);
+        const reverseListStream = await device.shell('reverse --list');
+        const reverseListOutput = await streamToString(reverseListStream);
+        const exists = reverseListOutput.includes(tunnelString);
+        log(LogLevel.DEBUG, `[CheckTunnel] Reverse tunnel ${tunnelString} ${exists ? 'exists' : 'does not exist'}`);
         return exists;
     } catch (error) {
-        log(LogLevel.DEBUG, `[Exec] Error checking reverse tunnel list: ${error.message}. Assuming tunnel does not exist.`);
+        log(LogLevel.DEBUG, `[CheckTunnel] Error checking reverse tunnel list: ${error.message}. Assuming tunnel does not exist.`);
         return false;
     }
 }
@@ -596,7 +722,7 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         streamingStartedNotified: false,
         unidentifiedSockets: new Map(),
         audioMetadata: null,
-		maxVolume: null,
+        maxVolume: null,
         androidVersion: null
     };
     if (runOptions.video === 'true') session.expectedSockets.push('video');
@@ -611,18 +737,22 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
     sessions.set(scid, session);
 
     try {
-        await executeCommand(`adb -s ${deviceId} push "${SERVER_JAR_PATH}" "${SERVER_DEVICE_PATH}"`, `Push server JAR (SCID: ${scid})`);
-        const tunnelString = `localabstract:scrcpy_${scid}`;
+        const device = adb.getDevice(deviceId);
+        await device.push(SERVER_JAR_PATH, SERVER_DEVICE_PATH);
+        log(LogLevel.INFO, `[Session ${scid}] Pushed scrcpy-server.jar to device ${deviceId}`);
 
-        if (await checkReverseTunnelExists(deviceId, tunnelString)) {
-            await executeCommand(`adb -s ${deviceId} reverse --remove ${tunnelString}`, `Remove specific tunnel (SCID: ${scid})`);
-        } else {
-            log(LogLevel.DEBUG, `[Session ${scid}] No reverse tunnel ${tunnelString} found, skipping removal.`);
+        const tunnelString = `localabstract:scrcpy_${scid}`;
+        const reverseListStream = await device.shell('reverse --list');
+        const reverseListOutput = await streamToString(reverseListStream);
+        if (reverseListOutput.includes(tunnelString)) {
+            await device.shell(`reverse --remove ${tunnelString}`);
+            log(LogLevel.DEBUG, `[Session ${scid}] Removed existing reverse tunnel ${tunnelString}`);
         }
-        await executeCommand(`adb -s ${deviceId} reverse --remove-all`, `Remove all tunnels (SCID: ${scid})`).catch(() => {});
-        await executeCommand(`adb -s ${deviceId} reverse ${tunnelString} tcp:${port}`, `Setup reverse tunnel (SCID: ${scid})`);
+        await device.shell('reverse --remove-all');
+        log(LogLevel.DEBUG, `[Session ${scid}] Removed all existing reverse tunnels`);
+        await device.reverse(tunnelString, `tcp:${port}`);
         session.tunnelActive = true;
-        log(LogLevel.INFO, `[Session ${scid}] Reverse tunnel active.`);
+        log(LogLevel.INFO, `[Session ${scid}] Reverse tunnel active for ${tunnelString} on port ${port}`);
 
         session.tcpServer = createTcpServer(scid);
         await new Promise((resolve, reject) => {
@@ -647,10 +777,9 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         if (runOptions.control === 'false') args.push(`control=false`);
 
         const command = `CLASSPATH=${SERVER_DEVICE_PATH} app_process / com.genymobile.scrcpy.Server ${args.join(' ')}`;
-        const fullAdbCommand = `adb -s ${deviceId} shell "${command}"`;
         log(LogLevel.INFO, `[Session ${scid}] Executing scrcpy-server on device...`);
-        log(LogLevel.DEBUG, `[Session ${scid}] Full command: ${fullAdbCommand}`);
-        session.processStream = exec(fullAdbCommand);
+        log(LogLevel.DEBUG, `[Session ${scid}] Command: ${command}`);
+        session.processStream = exec(`adb -s ${deviceId} shell "${command}"`);
 
         session.processStream.stdout.on('data', (data) => log(LogLevel.INFO, `[scrcpy-server ${scid} stdout] ${data.toString().trim()}`));
         session.processStream.stderr.on('data', (data) => log(LogLevel.WARN, `[scrcpy-server ${scid} stderr] ${data.toString().trim()}`));
@@ -667,14 +796,12 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
             }
         });
         log(LogLevel.INFO, `[Session ${scid}] scrcpy-server process initiated.`);
-
     } catch (error) {
         log(LogLevel.ERROR, `[Session ${scid}] Error during ADB/TCP setup: ${error.message}`);
         await cleanupSession(scid);
         throw error;
     }
 }
-
 async function handleDisconnect(clientId) {
     const client = wsClients.get(clientId);
     if (!client) return;
@@ -898,11 +1025,12 @@ async function checkAndSendStreamingStarted(session, client) {
         if (session.tunnelActive && session.deviceId) {
             const tunnelString = `localabstract:scrcpy_${session.scid}`;
             try {
-                if (await checkReverseTunnelExists(session.deviceId, tunnelString)) {
-                    await executeCommand(
-                        `adb -s ${session.deviceId} reverse --remove ${tunnelString}`,
-                        `Remove reverse tunnel after sockets opened (SCID: ${session.scid})`
-                    );
+                const device = adb.getDevice(session.deviceId);
+                const reverseListStream = await device.shell('reverse --list');
+                const reverseListOutput = await streamToString(reverseListStream);
+                if (reverseListOutput.includes(tunnelString)) {
+                    await device.shell(`reverse --remove ${tunnelString}`);
+                    log(LogLevel.INFO, `[Session ${session.scid}] Removed reverse tunnel ${tunnelString}`);
                 } else {
                     log(LogLevel.DEBUG, `[Session ${session.scid}] Reverse tunnel ${tunnelString} already removed or not found.`);
                 }
@@ -952,7 +1080,6 @@ function attemptIdentifyControlByDeduction(session, client) {
 
                 if (session?.controlSocket && !session.controlSocket.destroyed && client?.ws?.readyState === WebSocket.OPEN) {
                     try {
-                        // --- CHANGE THIS LINE ---
                         session.controlSocket.write(Buffer.from(msg.data, 'base64'));
                         log(LogLevel.DEBUG, `[Worker ${msg.scid}] Wrote ${msg.data.length} base64 chars worth of data to control socket`);
                     } catch (e) {
@@ -1104,7 +1231,6 @@ function processSingleSocket(socket, client, session) {
                     session.unidentifiedSockets?.delete(socket.remoteId);
                     socket.state = 'STREAMING';
 
-                    // Initialize worker thread for control messages
                     const worker = new Worker(path.join(__dirname, 'controlWorker.js'), {
                         workerData: {
                             scid: session.scid,

@@ -81,6 +81,8 @@ let state = {
     lastMousePosition: { x: 0, y: 0 },
     nextAudioTime: 0,
     totalAudioFrames: 0,
+	isWifiOn: true,
+	wifiSsid: null,
 };
 
 const log = (message) => {
@@ -562,8 +564,7 @@ const handleMouseDown = (event) => {
 };
 
 const handleMouseUp = (event) => {
-    // Add this check at the very beginning
-    if (!state.isMouseDown) return; // Interaction didn't start on the video element
+    if (!state.isMouseDown) return;
 
     if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
     event.preventDefault();
@@ -576,7 +577,6 @@ const handleMouseUp = (event) => {
         default: return;
     }
 
-    // This check might now be redundant because of the initial check, but keep for safety
     if (!(state.currentMouseButtons & buttonFlag)) {
         return;
     }
@@ -589,11 +589,7 @@ const handleMouseUp = (event) => {
     state.currentMouseButtons &= ~buttonFlag;
 
     if (state.currentMouseButtons === 0) {
-        state.isMouseDown = false; // Reset state AFTER sending message
-    } else {
-         // Optional: If other buttons are still held, send a move event?
-         // This might not be necessary depending on desired behavior.
-        // sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, finalCoords.x, finalCoords.y);
+        state.isMouseDown = false;
     }
 };
 
@@ -709,6 +705,7 @@ const startStreaming = () => {
                             elements.flipOrientationBtn.disabled = false;
                             elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart);
                             state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
+							requestWifiStatus();
                         } else if (message.message === 'Streaming stopped') {
                             stopStreaming(false);
                         }
@@ -745,6 +742,41 @@ const startStreaming = () => {
 							log(`Failed to get volume: ${message.error}`);
 						}
 						break;
+					case 'navResponse':
+						if (message.success) {
+							updateStatus(`Navigation ${message.key} command executed`);
+							log(`Navigation ${message.key} command succeeded`);
+						} else {
+							updateStatus(`Failed to execute ${message.key} command: ${message.error}`);
+							log(`Navigation ${message.key} command failed: ${message.error}`);
+						}
+						break;
+					case 'wifiResponse':
+						const wifiToggleBtn = document.getElementById('wifiToggleBtn');
+						wifiToggleBtn.classList.remove('pending');
+						if (message.success) {
+							state.isWifiOn = message.currentState;
+							state.wifiSsid = message.ssid;
+							updateWifiIndicator();
+							updateStatus(`Wi-Fi ${state.isWifiOn ? 'enabled' : 'disabled'}${state.isWifiOn && state.wifiSsid ? ` (Connected to ${state.wifiSsid})` : ''}`);
+							log(`Wi-Fi toggled successfully: ${state.isWifiOn ? 'Enabled' : 'Disabled'}${state.isWifiOn && state.wifiSsid ? ` (SSID: ${state.wifiSsid})` : ''}`);
+						} else {
+							updateStatus(`Failed to toggle Wi-Fi: ${message.error}`);
+							log(`Failed to toggle Wi-Fi: ${message.error}`);
+						}
+						break;
+					case 'wifiStatus':
+						if (message.success) {
+							state.isWifiOn = message.isWifiOn;
+							state.wifiSsid = message.ssid;
+							updateWifiIndicator();
+							updateStatus(`Wi-Fi is ${state.isWifiOn ? 'enabled' : 'disabled'}${state.isWifiOn && state.wifiSsid ? ` (Connected to ${state.wifiSsid})` : ''}`);
+							log(`Wi-Fi status: ${state.isWifiOn ? 'Enabled' : 'Disabled'}${state.isWifiOn && state.wifiSsid ? ` (SSID: ${state.wifiSsid})` : ''}`);
+						} else {
+							updateStatus(`Failed to get Wi-Fi status: ${message.error}`);
+							log(`Failed to get Wi-Fi status: ${message.error}`);
+						}
+						break;						
                     default:
                         log(`Unknown message type: ${message.type}`);
                 }
@@ -969,7 +1001,6 @@ const wifiToggleBtn = document.getElementById('wifiToggleBtn');
 
 
 let isTaskbarPinned = false;
-let isWifiOn = true;
 let taskbarHideTimeout = null;
 const HIDE_TIMEOUT_MS = 2000;
 let activePanel = null;
@@ -982,11 +1013,41 @@ function updateClock() {
 }
 
 function updateWifiIndicator() {
-    wifiIndicator.textContent = isWifiOn ? '📶' : '✈️';
+    const isWifiOn = state.isWifiOn;
+
+    const wifiToggleBtn = document.getElementById('wifiToggleBtn');
+    const wifiToggleIcon = wifiToggleBtn.querySelector('.icon');
+    const wifiToggleOn = wifiToggleIcon.querySelector('.wifi-icon.wifion');
+    const wifiToggleOff = wifiToggleIcon.querySelector('.wifi-icon.wifioff');
+    wifiToggleOn.classList.toggle('hidden', !isWifiOn);
+    wifiToggleOff.classList.toggle('hidden', isWifiOn);
     wifiToggleBtn.classList.toggle('active', isWifiOn);
     wifiToggleBtn.setAttribute('aria-pressed', isWifiOn.toString());
-    wifiToggleBtn.querySelector('.icon').textContent = isWifiOn ? '📶' : '✈️';
-    wifiToggleBtn.querySelector('span:last-child').textContent = isWifiOn ? 'Wi-Fi' : 'Flight Mode';
+    wifiToggleBtn.querySelector('span:last-child').textContent = isWifiOn ? (state.wifiSsid || 'Wi-Fi') : 'Flight Mode';
+
+    const wifiIndicator = quickSettingsTrigger.querySelector('.wifi-indicator');
+    const wifiIndicatorOn = wifiIndicator.querySelector('.wifi-icon.wifion');
+    const wifiIndicatorOff = wifiIndicator.querySelector('.wifi-icon.wifioff');
+    wifiIndicatorOn.classList.toggle('hidden', !isWifiOn);
+    wifiIndicatorOff.classList.toggle('hidden', isWifiOn);
+}
+
+function requestWifiStatus() {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        const message = {
+            action: 'getWifiStatus'
+        };
+        try {
+            state.ws.send(JSON.stringify(message));
+            log('Requested Wi-Fi status');
+        } catch (error) {
+            console.error(`Failed to request Wi-Fi status: ${error}`);
+            updateStatus(`Failed to get Wi-Fi status: ${error.message}`);
+        }
+    } else {
+        log('WebSocket not connected, cannot get Wi-Fi status');
+        updateStatus('Cannot get Wi-Fi status: Not connected');
+    }
 }
 
 function updatePinToggleIcon() {
@@ -996,8 +1057,19 @@ function updatePinToggleIcon() {
 
 function updateSpeakerIcon() {
     const volume = parseInt(mediaVolumeSlider.value, 10);
-    speakerButton.textContent = volume === 0 ? '🔇' : '🔊';
-    speakerButton.setAttribute('aria-label', volume === 0 ? 'Audio Muted' : 'Audio Settings');
+    const isMuted = volume === 0;
+
+    const speakerButtonUnmuted = speakerButton.querySelector('.speaker-icon.unmuted');
+    const speakerButtonMuted = speakerButton.querySelector('.speaker-icon.muted');
+    speakerButtonUnmuted.classList.toggle('hidden', isMuted);
+    speakerButtonMuted.classList.toggle('hidden', !isMuted);
+    speakerButton.setAttribute('aria-label', isMuted ? 'Audio Muted' : 'Audio Settings');
+
+    const audioPanelIcon = audioPanel.querySelector('.slider-group .icon');
+    const audioPanelUnmuted = audioPanelIcon.querySelector('.speaker-icon.unmuted');
+    const audioPanelMuted = audioPanelIcon.querySelector('.speaker-icon.muted');
+    audioPanelUnmuted.classList.toggle('hidden', isMuted);
+    audioPanelMuted.classList.toggle('hidden', !isMuted);
 }
 
 function updateSliderBackground(slider) {
@@ -1027,9 +1099,27 @@ function handlePinToggle() {
 }
 
 function handleWifiToggle() {
-    isWifiOn = !isWifiOn;
-    updateWifiIndicator();
-    log(`Toggled Wi-Fi state to: ${isWifiOn ? 'On' : 'Off (Flight Mode)'}`);
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        const newWifiState = !state.isWifiOn;
+        const message = {
+            action: 'wifiToggle',
+            enable: newWifiState
+        };
+        try {
+            state.ws.send(JSON.stringify(message));
+            log(`Sent Wi-Fi toggle command: ${newWifiState ? 'Enable' : 'Disable'}`);
+            updateStatus(`Wi-Fi ${newWifiState ? 'enabling' : 'disabling'}...`);
+
+            const wifiToggleBtn = document.getElementById('wifiToggleBtn');
+            wifiToggleBtn.classList.add('pending');
+        } catch (error) {
+            console.error(`Failed to send Wi-Fi toggle command: ${error}`);
+            updateStatus(`Failed to toggle Wi-Fi: ${error.message}`);
+        }
+    } else {
+        log('WebSocket not connected, cannot toggle Wi-Fi');
+        updateStatus('Cannot toggle Wi-Fi: Not connected');
+    }
 }
 
 function openPanel(panelId) {
@@ -1061,10 +1151,36 @@ elements.streamArea.addEventListener('touchstart', showTaskbar, { passive: true 
 
 
 pinToggleButton.addEventListener('click', handlePinToggle);
-backButton.addEventListener('click', () => log('Back button clicked'));
-homeButton.addEventListener('click', () => log('Home button clicked'));
-recentsButton.addEventListener('click', () => log('Recents button clicked'));
 
+backButton.addEventListener('click', () => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ action: 'navAction', key: 'back' }));
+        log('Sent Back navigation command');
+    } else {
+        log('Cannot send Back command: WebSocket not connected');
+        updateStatus('Cannot send navigation command: Not connected');
+    }
+});
+
+homeButton.addEventListener('click', () => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ action: 'navAction', key: 'home' }));
+        log('Sent Home navigation command');
+    } else {
+        log('Cannot send Home command: WebSocket not connected');
+        updateStatus('Cannot send navigation command: Not connected');
+    }
+});
+
+recentsButton.addEventListener('click', () => {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ action: 'navAction', key: 'recents' }));
+        log('Sent Recents navigation command');
+    } else {
+        log('Cannot send Recents command: WebSocket not connected');
+        updateStatus('Cannot send navigation command: Not connected');
+    }
+});
 
 speakerButton.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1072,7 +1188,6 @@ speakerButton.addEventListener('click', (e) => {
         closeActivePanel();
     } else {
         openPanel('audioPanel');
-        // Request current volume when opening the panel
         if (state.ws && state.ws.readyState === WebSocket.OPEN) {
             const message = {
                 action: 'getVolume'

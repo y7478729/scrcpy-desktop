@@ -701,3 +701,71 @@
          font-size: 0.8rem;
      }
 }
+
+.speaker-icon {
+    display: inline-block;
+    vertical-align: middle;
+}
+
+.speaker-icon.hidden {
+    display: none;
+}
+
+.slider-group .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+}
+
+.slider-group .speaker-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.wifi-icon {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+}
+.wifi-icon.hidden {
+    display: none;
+}
+.icon {
+    display: inline-flex;
+    align-items: center;
+}
+.wifi-indicator {
+    display: inline-flex;
+    align-items: center;
+}
+.panel-toggle-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+.panel-toggle-button.active {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.panel-toggle-button.pending {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.battery-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 1rem;
+}
+
+#batteryLevel,
+.percent {
+  display: inline-block;
+  vertical-align: middle;
+}
