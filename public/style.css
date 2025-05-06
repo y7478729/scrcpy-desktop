@@ -199,13 +199,6 @@
  #videoPlaceholder.hidden {
      opacity: 0;
 }
- #info {
-     margin-bottom: 1rem;
-     font-size: 0.9rem;
-     color: var(--text-color);
-     text-align: center;
-     min-height: 1.5em;
-}
  .controls {
      width: 100%;
      max-width: var(--control-width);
@@ -271,12 +264,6 @@
  .buttons button:disabled {
      opacity: 0.6;
      cursor: not-allowed;
-}
- #status {
-     margin-top: 1rem;
-     font-size: 0.9em;
-     color: var(--text-color);
-     opacity: 0.8;
 }
 
  .custom-taskbar {
@@ -768,4 +755,95 @@
 .percent {
   display: inline-block;
   vertical-align: middle;
+}
+
+.battery-fill {
+    transition: fill 0.3s ease, height 0.3s ease, y 0.3s ease;
+}
+
+.battery-icon.low-battery .battery-fill,
+.battery-icon.low-battery {
+    fill: red;
+    stroke: red;
+}
+
+.log-area {
+    width: 100%;
+    max-width: var(--control-width);
+    margin-top: 1rem;
+    background: var(--control-bg);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+    overflow: hidden;
+}
+
+#toggleLogBtn {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--button-bg);
+    color: var(--button-text);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 8px 8px 0 0;
+    text-align: center;
+    transition: var(--transition);
+}
+
+#toggleLogBtn:hover {
+    background: var(--button-hover);
+}
+
+#toggleLogBtn[aria-expanded="false"] {
+    border-radius: 8px;
+}
+
+.log-content {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-color);
+    opacity: 0.9;
+    display: block;
+    transition: max-height 0.3s ease;
+}
+
+.log-content.hidden {
+    max-height: 0;
+    padding: 0 0.5rem;
+    display: none;
+}
+
+.log-content div {
+    padding: 0.25rem 0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.1);
+    word-wrap: break-word;
+}
+
+.log-content div:last-child {
+    border-bottom: none;
+}
+
+@media (max-width: 768px) {
+    .log-area {
+        margin-top: 0.75rem;
+    }
+    #toggleLogBtn {
+        padding: 0.6rem;
+        font-size: 0.85rem;
+    }
+    .log-content {
+        font-size: 0.8rem;
+    }
+}
+
+@media (max-width: 480px) {
+    #toggleLogBtn {
+        font-size: 0.8rem;
+    }
+    .log-content {
+        max-height: 200px;
+    }
 }

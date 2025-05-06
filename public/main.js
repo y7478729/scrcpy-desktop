@@ -3387,7 +3387,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
 const VideoConverter = require('h264-converter').default;
 const { setLogger } = require('h264-converter');
 
-setLogger(() => {}, console.error);
+setLogger(() => {}, (message) => appendLog(message, true));
 
 const CHECK_STATE_INTERVAL_MS = 250;
 const MAX_SEEK_WAIT_MS = 1500;
@@ -3426,7 +3426,6 @@ const elements = {
     maxFpsSelect: document.getElementById('maxFps'),
     enableAudioInput: document.getElementById('enableAudio'),
     enableControlInput: document.getElementById('enableControl'),
-    statusDiv: document.getElementById('status'),
     themeToggle: document.getElementById('themeToggle'),
     fullscreenBtn: document.getElementById('fullscreenBtn'),
     streamArea: document.getElementById('streamArea'),
@@ -3434,6 +3433,9 @@ const elements = {
     videoElement: document.getElementById('screen'),
     videoBorder: document.getElementById('videoBorder'),
     flipOrientationBtn: document.getElementById('flipOrientationBtn'),
+	logArea: document.getElementById('logArea'),
+    logContent: document.getElementById('logContent'),
+    toggleLogBtn: document.getElementById('toggleLogBtn'),
 };
 
 let state = {
@@ -3471,12 +3473,37 @@ let state = {
 	wifiSsid: null,
 };
 
-const log = (message) => {
-    console.log(message);
+
+const MAX_LOG_LINES = 50;
+const logMessages = [];
+
+const appendLog = (message, isError = false) => {
+    const timestamp = new Date().toLocaleTimeString('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    });
+    logMessages.push({ message: `[${timestamp}] ${message}`, isError });
+    if (logMessages.length > MAX_LOG_LINES) {
+        logMessages.shift();
+    }
+    updateLogDisplay();
 };
 
-const updateStatus = (message) => {
-    elements.statusDiv.textContent = `Status: ${message}`;
+const updateLogDisplay = () => {
+    elements.logContent.innerHTML = logMessages
+        .map(({ message, isError }) => `<div style="${isError ? 'color: #ff4444;' : ''}">${message}</div>`)
+        .join('');
+    elements.logContent.scrollTop = elements.logContent.scrollHeight;
+};
+
+const updateStatus = (message) => appendLog(message);
+
+const originalConsoleError = console.error;
+console.error = (message, ...args) => {
+    const formattedMessage = [message, ...args].join(' ');
+    appendLog(formattedMessage, true);
+    originalConsoleError(message, ...args);
 };
 
 const updateVideoBorder = () => {
@@ -3550,8 +3577,8 @@ const onVideoCanPlay = () => {
 };
 
 const onVideoError = (e) => {
-    console.error('Video Element Error:', e);
-    log(`Video Error: ${elements.videoElement.error?.message} (Code: ${elements.videoElement.error?.code})`);
+    appendLog(`Video Element Error: ${e.message}`, true);
+    appendLog(`Video Error: ${elements.videoElement.error?.message} (Code: ${elements.videoElement.error?.code})`, true);
 };
 
 const cleanSourceBuffer = () => {
@@ -3561,15 +3588,15 @@ const cleanSourceBuffer = () => {
         return;
     }
 
-    try {
-        console.log(`Removing source buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
-        state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
-        state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
-    } catch (e) {
-        console.error(`Failed to clean source buffer: ${e}`);
-        state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
-        state.removeStart = state.removeEnd = -1;
-    }
+	try {
+		appendLog(`Removing source buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
+		state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
+		state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
+	} catch (e) {
+		appendLog(`Failed to clean source buffer: ${e.message}`, true);
+		state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
+		state.removeStart = state.removeEnd = -1;
+	}
 };
 
 const checkForIFrameAndCleanBuffer = (frameData) => {
@@ -3733,9 +3760,9 @@ const checkForBadState = () => {
             elements.videoElement.play().catch(e => console.warn("Autoplay prevented after seek:", e));
         };
 
-        if (state.seekingSince !== -1) {
-            console.warn(`Attempt to seek while already seeking! ${waitingForSeekEnd}`);
-        }
+		if (state.seekingSince !== -1) {
+			appendLog(`Attempt to seek while already seeking! ${waitingForSeekEnd}`, true);
+		}
         state.seekingSince = now;
         elements.videoElement.addEventListener('seeked', onSeekEnd);
         elements.videoElement.currentTime = end;
@@ -3744,7 +3771,7 @@ const checkForBadState = () => {
 
 const setupAudioPlayer = (codecId, metadata) => {
     if (codecId !== CODEC_IDS.AAC) {
-        log(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
+        appendLog(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
         return;
     }
     if (!window.AudioContext || !window.AudioDecoder) {
@@ -3820,7 +3847,7 @@ const setupAudioPlayer = (codecId, metadata) => {
         state.nextAudioTime = 0;
         state.totalAudioFrames = 0;
     } catch (e) {
-        log(`Failed to setup AudioDecoder: ${e}`);
+        appendLog(`Failed to setup AudioDecoder: ${e}`);
         state.audioDecoder = null;
         state.audioContext = null;
         updateStatus('Failed to initialize audio');
@@ -3945,7 +3972,7 @@ const handleMouseDown = (event) => {
         state.lastMousePosition = coords;
         sendMouseEvent(AMOTION_EVENT_ACTION_DOWN, state.currentMouseButtons, coords.x, coords.y);
     } else {
-        console.warn(`Mouse Down - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
+        appendLog(`Mouse Down - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
     }
 };
 
@@ -3988,7 +4015,7 @@ const handleMouseMove = (event) => {
         state.lastMousePosition = coords;
         sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, coords.x, coords.y);
     } else {
-        console.warn(`Mouse Move - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
+        appendLog(`Mouse Move - Invalid coordinates: Raw: (${event.clientX}, ${event.clientY})`);
     }
 };
 
@@ -3996,7 +4023,7 @@ const handleMouseLeave = (event) => {
     if (!state.isRunning || !state.controlEnabledAtStart || !state.isMouseDown || state.currentMouseButtons === 0) return;
     event.preventDefault();
 
-    console.log(`Mouse leave while buttons pressed: ${state.currentMouseButtons}`);
+    appendLog(`Mouse leave while buttons pressed: ${state.currentMouseButtons}`);
     sendMouseEvent(AMOTION_EVENT_ACTION_UP, state.currentMouseButtons, state.lastMousePosition.x, state.lastMousePosition.y);
 
     state.isMouseDown = false;
@@ -4005,7 +4032,7 @@ const handleMouseLeave = (event) => {
 
 const startStreaming = () => {
     if (state.isRunning || (state.ws && state.ws.readyState === WebSocket.OPEN)) {
-        log('Cannot start stream: Already running or WebSocket open');
+        appendLog('Cannot start stream: Already running or WebSocket open');
         return;
     }
 
@@ -4036,7 +4063,7 @@ const startStreaming = () => {
     state.ws.binaryType = 'arraybuffer';
 
     state.ws.onopen = () => {
-        log('WebSocket connected');
+        appendLog('WebSocket connected');
         updateStatus('Connected, initializing stream...');
         const message = {
             action: 'start',
@@ -4057,14 +4084,14 @@ const startStreaming = () => {
                 const message = JSON.parse(event.data);
                 switch (message.type) {
                     case 'deviceName':
-                        log(`Device Name: ${message.name}`);
+                        appendLog(`Device Name: ${message.name}`);
                         updateStatus(`Connected to ${message.name}`);
                         break;
                     case 'videoInfo':
                         state.deviceWidth = message.width;
                         state.deviceHeight = message.height;
                         state.videoResolution = `${message.width}x${message.height}`;
-                        log(`Video Info: Codec=0x${message.codecId.toString(16)}, ${state.videoResolution}`);
+                        appendLog(`Video Info: Codec=0x${message.codecId.toString(16)}, ${state.videoResolution}`);
                         elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
                             `${state.deviceWidth} / ${state.deviceHeight}` : '9 / 16';
                         elements.videoPlaceholder.classList.add('hidden');
@@ -4079,32 +4106,38 @@ const startStreaming = () => {
                         }
                         break;
                     case 'audioInfo':
-                        log(`Audio Info: Codec=0x${message.codecId.toString(16)}${message.metadata ? `, Metadata=${JSON.stringify(message.metadata)}` : ''}`);
+                        appendLog(`Audio Info: Codec=0x${message.codecId.toString(16)}${message.metadata ? `, Metadata=${JSON.stringify(message.metadata)}` : ''}`);
                         if (message.codecId === CODEC_IDS.AAC && message.metadata && elements.enableAudioInput.checked) {
                             setupAudioPlayer(message.codecId, message.metadata);
                         }
                         break;
                     case 'status':
-                        log(`Status: ${message.message}`);
+                        appendLog(`Status: ${message.message}`);
                         updateStatus(message.message);
                         if (message.message === 'Streaming started') {
                             elements.flipOrientationBtn.disabled = false;
                             elements.videoElement.classList.toggle('control-enabled', state.controlEnabledAtStart);
                             state.checkStateIntervalId = setInterval(checkForBadState, CHECK_STATE_INTERVAL_MS);
+							state.ws.send(JSON.stringify({ action: 'getBatteryLevel' }));
 							requestWifiStatus();
                         } else if (message.message === 'Streaming stopped') {
                             stopStreaming(false);
                         }
+						  else if (message.message === 'Audio disabled') {
+							elements.enableAudioInput.checked = false;
+							appendLog('Audio disabled due to Android version < 11');
+							updateStatus('Audio disabled: Android version < 11 not supported.');
+						}
                         break;
                     case 'error':
-                        log(`Error: ${message.message}`);
+                        appendLog(`Error: ${message.message}`);
                         updateStatus(`Error: ${message.message}`);
                         stopStreaming(false);
                         break;
                     case 'deviceMessage':
                         try {
                             const deviceData = new Uint8Array(Buffer.from(message.data, 'base64'));
-                            log(`Device Message: ${deviceData.length} bytes`);
+                            appendLog(`Device Message: ${deviceData.length} bytes`);
                         } catch (e) {
                             console.error(`Error processing device message: ${e}`);
                         }
@@ -4122,19 +4155,19 @@ const startStreaming = () => {
 							updateSliderBackground(mediaVolumeSlider);
 							updateSpeakerIcon();
 							updateStatus(`Current volume: ${message.volume}%`);
-							log(`Received volume info: ${message.volume}%`);
+							appendLog(`Received volume info: ${message.volume}%`);
 						} else {
 							updateStatus(`Failed to get volume: ${message.error}`);
-							log(`Failed to get volume: ${message.error}`);
+							appendLog(`Failed to get volume: ${message.error}`);
 						}
 						break;
 					case 'navResponse':
 						if (message.success) {
 							updateStatus(`Navigation ${message.key} command executed`);
-							log(`Navigation ${message.key} command succeeded`);
+							appendLog(`Navigation ${message.key} command succeeded`);
 						} else {
 							updateStatus(`Failed to execute ${message.key} command: ${message.error}`);
-							log(`Navigation ${message.key} command failed: ${message.error}`);
+							appendLog(`Navigation ${message.key} command failed: ${message.error}`);
 						}
 						break;
 					case 'wifiResponse':
@@ -4145,10 +4178,10 @@ const startStreaming = () => {
 							state.wifiSsid = message.ssid;
 							updateWifiIndicator();
 							updateStatus(`Wi-Fi ${state.isWifiOn ? 'enabled' : 'disabled'}${state.isWifiOn && state.wifiSsid ? ` (Connected to ${state.wifiSsid})` : ''}`);
-							log(`Wi-Fi toggled successfully: ${state.isWifiOn ? 'Enabled' : 'Disabled'}${state.isWifiOn && state.wifiSsid ? ` (SSID: ${state.wifiSsid})` : ''}`);
+							appendLog(`Wi-Fi toggled successfully: ${state.isWifiOn ? 'Enabled' : 'Disabled'}${state.isWifiOn && state.wifiSsid ? ` (SSID: ${state.wifiSsid})` : ''}`);
 						} else {
 							updateStatus(`Failed to toggle Wi-Fi: ${message.error}`);
-							log(`Failed to toggle Wi-Fi: ${message.error}`);
+							appendLog(`Failed to toggle Wi-Fi: ${message.error}`);
 						}
 						break;
 					case 'wifiStatus':
@@ -4157,14 +4190,24 @@ const startStreaming = () => {
 							state.wifiSsid = message.ssid;
 							updateWifiIndicator();
 							updateStatus(`Wi-Fi is ${state.isWifiOn ? 'enabled' : 'disabled'}${state.isWifiOn && state.wifiSsid ? ` (Connected to ${state.wifiSsid})` : ''}`);
-							log(`Wi-Fi status: ${state.isWifiOn ? 'Enabled' : 'Disabled'}${state.isWifiOn && state.wifiSsid ? ` (SSID: ${state.wifiSsid})` : ''}`);
+							appendLog(`Wi-Fi status: ${state.isWifiOn ? 'Enabled' : 'Disabled'}${state.isWifiOn && state.wifiSsid ? ` (SSID: ${state.wifiSsid})` : ''}`);
 						} else {
 							updateStatus(`Failed to get Wi-Fi status: ${message.error}`);
-							log(`Failed to get Wi-Fi status: ${message.error}`);
+							appendLog(`Failed to get Wi-Fi status: ${message.error}`);
+						}
+						break;
+					case 'batteryInfo':
+						if (message.success) {
+							updateBatteryLevel(message.batteryLevel);
+							updateStatus(`Battery level: ${message.batteryLevel}%`);
+							appendLog(`Received battery level: ${message.batteryLevel}%`);
+						} else {
+							updateStatus(`Failed to get battery level: ${message.error}`);
+							appendLog(`Failed to get battery level: ${message.error}`);
 						}
 						break;						
                     default:
-                        log(`Unknown message type: ${message.type}`);
+                        appendLog(`Unknown message type: ${message.type}`);
                 }
             } catch (e) {
                 console.error(`Error parsing JSON message: ${e}`);
@@ -4188,12 +4231,12 @@ const startStreaming = () => {
     };
 
     state.ws.onclose = (event) => {
-        log(`WebSocket closed (Code: ${event.code}, Reason: ${event.reason})`);
+        appendLog(`WebSocket closed (Code: ${event.code}, Reason: ${event.reason})`);
         stopStreaming(false);
     };
 
     state.ws.onerror = (error) => {
-        console.error(`WebSocket error: ${error}`);
+        appendLog(`WebSocket error: ${error}`);
         updateStatus('WebSocket error');
         stopStreaming(false);
     };
@@ -4287,7 +4330,7 @@ elements.themeToggle.addEventListener('click', () => {
     const body = document.body;
     const newTheme = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
     body.setAttribute('data-theme', newTheme);
-    log(`Theme switched to ${newTheme}`);
+    appendLog(`Theme switched to ${newTheme}`);
 });
 
 let themeToggleTimeout;
@@ -4307,7 +4350,7 @@ elements.fullscreenBtn.addEventListener('click', () => {
         if (state.isRunning && elements.videoElement.classList.contains('visible')) {
              elements.streamArea.requestFullscreen().catch(e => console.error(`Fullscreen error: ${e}`));
         } else {
-            log("Cannot enter fullscreen: Stream not running or video not visible");
+            appendLog("Cannot enter fullscreen: Stream not running or video not visible");
         }
     } else {
         document.exitFullscreen();
@@ -4317,23 +4360,23 @@ elements.fullscreenBtn.addEventListener('click', () => {
 document.addEventListener('fullscreenchange', () => {
     const isFullscreen = document.fullscreenElement === elements.streamArea;
     elements.streamArea.classList.toggle('in-fullscreen-mode', isFullscreen);
-    log(isFullscreen ? 'Entered fullscreen' : 'Exited fullscreen');
+    appendLog(isFullscreen ? 'Entered fullscreen' : 'Exited fullscreen');
     requestAnimationFrame(updateVideoBorder);
 });
 
 elements.flipOrientationBtn.addEventListener('click', () => {
     if (!state.isRunning) {
-        log("Cannot flip orientation: Stream not running");
+        appendLog("Cannot flip orientation: Stream not running");
         return;
     }
     if (state.deviceWidth > 0 && state.deviceHeight > 0) {
-        log(`Flipping orientation from ${state.deviceWidth}x${state.deviceHeight}`);
+        appendLog(`Flipping orientation from ${state.deviceWidth}x${state.deviceHeight}`);
         const tempWidth = state.deviceWidth;
         state.deviceWidth = state.deviceHeight;
         state.deviceHeight = tempWidth;
         state.videoResolution = `${state.deviceWidth}x${state.deviceHeight}`;
 
-        log(`New orientation: ${state.deviceWidth}x${state.deviceHeight}`);
+        appendLog(`New orientation: ${state.deviceWidth}x${state.deviceHeight}`);
         elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
             `${state.deviceWidth} / ${state.deviceHeight}` : '9 / 16';
 
@@ -4341,7 +4384,7 @@ elements.flipOrientationBtn.addEventListener('click', () => {
             updateVideoBorder();
         });
     } else {
-        log("Cannot flip orientation: Dimensions not set");
+        appendLog("Cannot flip orientation: Dimensions not set");
     }
 });
 
@@ -4425,13 +4468,13 @@ function requestWifiStatus() {
         };
         try {
             state.ws.send(JSON.stringify(message));
-            log('Requested Wi-Fi status');
+            appendLog('Requested Wi-Fi status');
         } catch (error) {
             console.error(`Failed to request Wi-Fi status: ${error}`);
             updateStatus(`Failed to get Wi-Fi status: ${error.message}`);
         }
     } else {
-        log('WebSocket not connected, cannot get Wi-Fi status');
+        appendLog('WebSocket not connected, cannot get Wi-Fi status');
         updateStatus('Cannot get Wi-Fi status: Not connected');
     }
 }
@@ -4478,7 +4521,7 @@ function handlePinToggle() {
     isTaskbarPinned = !isTaskbarPinned;
     taskbar.classList.toggle('pinned', isTaskbarPinned);
     updatePinToggleIcon();
-    log(`Taskbar ${isTaskbarPinned ? 'pinned' : 'unpinned'}`);
+    appendLog(`Taskbar ${isTaskbarPinned ? 'pinned' : 'unpinned'}`);
     if (isTaskbarPinned) {
          showTaskbar();
     }
@@ -4493,7 +4536,7 @@ function handleWifiToggle() {
         };
         try {
             state.ws.send(JSON.stringify(message));
-            log(`Sent Wi-Fi toggle command: ${newWifiState ? 'Enable' : 'Disable'}`);
+            appendLog(`Sent Wi-Fi toggle command: ${newWifiState ? 'Enable' : 'Disable'}`);
             updateStatus(`Wi-Fi ${newWifiState ? 'enabling' : 'disabling'}...`);
 
             const wifiToggleBtn = document.getElementById('wifiToggleBtn');
@@ -4503,7 +4546,7 @@ function handleWifiToggle() {
             updateStatus(`Failed to toggle Wi-Fi: ${error.message}`);
         }
     } else {
-        log('WebSocket not connected, cannot toggle Wi-Fi');
+        appendLog('WebSocket not connected, cannot toggle Wi-Fi');
         updateStatus('Cannot toggle Wi-Fi: Not connected');
     }
 }
@@ -4541,9 +4584,9 @@ pinToggleButton.addEventListener('click', handlePinToggle);
 backButton.addEventListener('click', () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ action: 'navAction', key: 'back' }));
-        log('Sent Back navigation command');
+        appendLog('Sent Back navigation command');
     } else {
-        log('Cannot send Back command: WebSocket not connected');
+        appendLog('Cannot send Back command: WebSocket not connected');
         updateStatus('Cannot send navigation command: Not connected');
     }
 });
@@ -4551,9 +4594,9 @@ backButton.addEventListener('click', () => {
 homeButton.addEventListener('click', () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ action: 'navAction', key: 'home' }));
-        log('Sent Home navigation command');
+        appendLog('Sent Home navigation command');
     } else {
-        log('Cannot send Home command: WebSocket not connected');
+        appendLog('Cannot send Home command: WebSocket not connected');
         updateStatus('Cannot send navigation command: Not connected');
     }
 });
@@ -4561,9 +4604,9 @@ homeButton.addEventListener('click', () => {
 recentsButton.addEventListener('click', () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ action: 'navAction', key: 'recents' }));
-        log('Sent Recents navigation command');
+        appendLog('Sent Recents navigation command');
     } else {
-        log('Cannot send Recents command: WebSocket not connected');
+        appendLog('Cannot send Recents command: WebSocket not connected');
         updateStatus('Cannot send navigation command: Not connected');
     }
 });
@@ -4580,13 +4623,13 @@ speakerButton.addEventListener('click', (e) => {
             };
             try {
                 state.ws.send(JSON.stringify(message));
-                log('Requested current volume');
+                appendLog('Requested current volume');
             } catch (error) {
                 console.error(`Failed to request volume: ${error}`);
                 updateStatus(`Failed to get volume: ${error.message}`);
             }
         } else {
-            log('WebSocket not connected, cannot get volume');
+            appendLog('WebSocket not connected, cannot get volume');
             updateStatus('Cannot get volume: Not connected');
         }
     }
@@ -4614,7 +4657,7 @@ function sendVolumeUpdate(volumeValue) {
             updateStatus(`Failed to set volume: ${e.message}`);
         }
     } else {
-        log('WebSocket not connected, cannot set volume');
+        appendLog('WebSocket not connected, cannot set volume');
         updateStatus('Cannot set volume: Not connected');
     }
 }
@@ -4669,6 +4712,40 @@ document.addEventListener('click', (e) => {
 });
 
 
+function updateBatteryLevel(level) {
+    const batteryLevel = parseInt(level, 10);
+
+    batteryLevelSpan.textContent = `${batteryLevel}`;
+    updateStatus(`Battery level: ${batteryLevel}%`);
+    appendLog(`Updated battery level: ${batteryLevel}%`);
+
+    const batteryFill = document.querySelector('.battery-fill');
+    const batteryIcon = document.querySelector('.battery-icon');
+    if (batteryFill) {
+        const maxFillHeight = 14;
+        const topY = 6.5;
+        const bottomY = topY + maxFillHeight;
+
+        const fillHeight = (batteryLevel / 100) * maxFillHeight;
+        const yPosition = bottomY - fillHeight;
+
+        batteryFill.setAttribute('height', fillHeight);
+        batteryFill.setAttribute('y', yPosition);
+    }
+
+    if (batteryIcon) {
+        batteryIcon.classList.toggle('low-battery', batteryLevel <= 15);
+    }
+}
+
+
+elements.toggleLogBtn.addEventListener('click', () => {
+    const isExpanded = elements.toggleLogBtn.getAttribute('aria-expanded') === 'true';
+    elements.toggleLogBtn.setAttribute('aria-expanded', (!isExpanded).toString());
+    elements.toggleLogBtn.textContent = isExpanded ? 'Show Logs' : 'Hide Logs';
+    elements.logContent.classList.toggle('hidden', isExpanded);
+});
+
 setInterval(updateClock, 5000);
 updateClock();
 updateWifiIndicator();
@@ -4677,7 +4754,7 @@ updateSpeakerIcon();
 updateSliderBackground(mediaVolumeSlider);
 
 
-updateStatus('Idle');
+appendLog('Idle');
 elements.stopButton.disabled = true;
 elements.flipOrientationBtn.disabled = true;
 updateVideoBorder();

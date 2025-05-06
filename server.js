@@ -231,6 +231,9 @@ function createWebSocketServer() {
 							break;
 						case 'getWifiStatus':
 							await handleGetWifiStatusCommand(clientId, ws, message);
+							break;	
+						case 'getBatteryLevel':
+							await handleGetBatteryLevelCommand(clientId, ws, message);
 							break;							
                         default:
                             log(LogLevel.WARN, `[WebSocket] Unknown action from ${clientId}: ${message.action}`);
@@ -508,7 +511,7 @@ async function handleWifiToggleCommand(clientId, ws, message) {
         return;
     }
 
-    const enableWifi = message.enable; // true to enable, false to disable
+    const enableWifi = message.enable;
     if (typeof enableWifi !== 'boolean') {
         log(LogLevel.WARN, `[WifiToggle ${clientId}] Invalid enable value: ${enableWifi}`);
         ws.send(JSON.stringify({
@@ -525,16 +528,13 @@ async function handleWifiToggleCommand(clientId, ws, message) {
         log(LogLevel.INFO, `[WifiToggle ${clientId}] Executing ADB command: ${command} on device ${session.deviceId}`);
         await device.shell(command);
 
-        // Wait 4 seconds to allow the Wi-Fi state to stabilize
         await new Promise(resolve => setTimeout(resolve, 6000));
 
-        // Verify the Wi-Fi state
         const statusStream = await device.shell('dumpsys wifi | grep "Wi-Fi is"');
         const statusOutput = await streamToString(statusStream);
         const isWifiOn = statusOutput.includes('Wi-Fi is enabled');
         log(LogLevel.INFO, `[WifiToggle ${clientId}] Wi-Fi state after toggle: ${isWifiOn ? 'enabled' : 'disabled'}`);
 
-        // Get the SSID
         let ssid = null;
         if (isWifiOn) {
             const ssidStream = await device.shell('dumpsys netstats | grep -E \'iface=wlan.*networkId\'');
@@ -591,7 +591,6 @@ async function handleGetWifiStatusCommand(clientId, ws, message) {
         const isWifiOn = statusOutput.includes('Wi-Fi is enabled');
         log(LogLevel.INFO, `[GetWifiStatus ${clientId}] Wi-Fi state: ${isWifiOn ? 'enabled' : 'disabled'}`);
 
-        // Get the SSID
         let ssid = null;
         if (isWifiOn) {
             const ssidStream = await device.shell('dumpsys netstats | grep -E \'iface=wlan.*networkId\'');
@@ -613,6 +612,73 @@ async function handleGetWifiStatusCommand(clientId, ws, message) {
             type: 'wifiStatus',
             success: false,
             error: `Failed to get Wi-Fi status: ${error.message}`
+        }));
+    }
+}
+
+async function getBatteryLevel(deviceId) {
+    log(LogLevel.DEBUG, `[BatteryLevel] Querying battery level for device ${deviceId}`);
+
+    const session = Array.from(sessions.values()).find(s => s.deviceId === deviceId);
+    if (!session) {
+        throw new Error(`No session found for device ${deviceId}`);
+    }
+
+    try {
+        const device = adb.getDevice(deviceId);
+        const batteryStream = await device.shell("dumpsys battery | grep 'level:' | cut -d':' -f2 | tr -d ' '");
+        const batteryOutput = await streamToString(batteryStream);
+        const batteryLevel = parseInt(batteryOutput.trim(), 10);
+
+        if (isNaN(batteryLevel) || batteryLevel < 0 || batteryLevel > 100) {
+            throw new Error(`Invalid battery level: ${batteryOutput.trim()}`);
+        }
+
+        log(LogLevel.DEBUG, `[BatteryLevel] Retrieved: batteryLevel=${batteryLevel}%`);
+        return batteryLevel;
+    } catch (error) {
+        log(LogLevel.ERROR, `[BatteryLevel] Failed to get battery level: ${error.message}`);
+        throw error;
+    }
+}
+
+async function handleGetBatteryLevelCommand(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client || !client.session) {
+        log(LogLevel.WARN, `[GetBatteryLevel ${clientId}] No active session for client`);
+        ws.send(JSON.stringify({
+            type: 'batteryInfo',
+            success: false,
+            error: 'No active session'
+        }));
+        return;
+    }
+
+    const session = sessions.get(client.session);
+    if (!session || !session.deviceId) {
+        log(LogLevel.WARN, `[GetBatteryLevel ${clientId}] No device associated with session ${client.session}`);
+        ws.send(JSON.stringify({
+            type: 'batteryInfo',
+            success: false,
+            error: 'No device found'
+        }));
+        return;
+    }
+
+    try {
+        const batteryLevel = await getBatteryLevel(session.deviceId);
+        log(LogLevel.INFO, `[GetBatteryLevel ${clientId}] Current battery level: ${batteryLevel}% for device ${session.deviceId}`);
+        ws.send(JSON.stringify({
+            type: 'batteryInfo',
+            success: true,
+            batteryLevel: batteryLevel
+        }));
+    } catch (error) {
+        log(LogLevel.ERROR, `[GetBatteryLevel ${clientId}] Failed to get battery level: ${error.message}`);
+        ws.send(JSON.stringify({
+            type: 'batteryInfo',
+            success: false,
+            error: error.message
         }));
     }
 }
@@ -646,9 +712,21 @@ async function handleStart(clientId, ws, message) {
         deviceId = devices[0].id;
         log(LogLevel.INFO, `[HandleStart ${clientId}] Using device: ${deviceId}`);
 
+        let androidVersion;
+        const device = adb.getDevice(deviceId);
+        const versionStream = await device.shell('getprop ro.build.version.release');
+        const versionOutput = await streamToString(versionStream);
+        const versionMatch = versionOutput.trim().match(/^(\d+)/);
+        androidVersion = versionMatch ? parseInt(versionMatch[1], 10) : NaN;
+        if (isNaN(androidVersion)) {
+            throw new Error(`Invalid Android version: ${versionOutput.trim()}`);
+        }
+        log(LogLevel.DEBUG, `[HandleStart ${clientId}] Android version: ${androidVersion}`);
+
         const runOptions = {
             ...BASE_SCRCPY_OPTIONS
         };
+		
         const maxSize = parseInt(message.maxSize);
         if (!isNaN(maxSize) && maxSize > 0) runOptions.max_size = String(maxSize);
         const maxFps = parseInt(message.maxFps);
@@ -656,7 +734,7 @@ async function handleStart(clientId, ws, message) {
         const bitrate = parseInt(message.bitrate);
         if (!isNaN(bitrate) && bitrate > 0) runOptions.video_bit_rate = String(bitrate);
         const audioEnabled = message.enableAudio || false;
-        runOptions.audio = String(audioEnabled);
+        runOptions.audio = androidVersion < 11 ? 'false' : String(audioEnabled);
         const videoEnabled = !(message.video === false || message.video === 'false');
         runOptions.video = String(videoEnabled);
         const controlEnabled = message.enableControl || false;
@@ -668,8 +746,17 @@ async function handleStart(clientId, ws, message) {
         log(LogLevel.DEBUG, `[HandleStart ${clientId}] Final scrcpy options to be used:`, runOptions);
 
         await setupScrcpySession(deviceId, scid, port, runOptions, clientId);
+        const session = sessions.get(scid);
+        session.androidVersion = androidVersion;
         client.session = scid;
         log(LogLevel.INFO, `[HandleStart ${clientId}] Session ${scid} setup initiated. Waiting for connections...`);
+
+		if (androidVersion < 11 && audioEnabled) {
+			ws.send(JSON.stringify({
+				type: MESSAGE_TYPES.STATUS,
+				message: 'Audio disabled'
+			}));
+		}
 
     } catch (err) {
         log(LogLevel.ERROR, `[HandleStart ${clientId}] Critical error during setup: ${err.message}`);
@@ -835,8 +922,14 @@ async function cleanupSession(scid) {
         audioSocket,
         controlSocket,
         clientId,
-        unidentifiedSockets
+        unidentifiedSockets,
+        batteryInterval
     } = session;
+
+    if (batteryInterval) {
+        clearInterval(batteryInterval);
+        log(LogLevel.INFO, `[Cleanup ${scid}] Cleared battery level interval.`);
+    }
 
     unidentifiedSockets?.forEach(sock => sock.destroy());
     videoSocket?.destroy();
@@ -873,7 +966,6 @@ async function cleanupSession(scid) {
     }
     log(LogLevel.INFO, `[Cleanup ${scid}] Cleanup finished.`);
 }
-
 function createTcpServer(scid) {
     const server = net.createServer((socket) => {
         const remoteId = `${socket.remoteAddress}:${socket.remotePort}`;
@@ -1021,6 +1113,20 @@ async function checkAndSendStreamingStarted(session, client) {
             message: 'Streaming started'
         }));
         session.streamingStartedNotified = true;
+
+        session.batteryInterval = setInterval(async () => {
+            try {
+                const batteryLevel = await getBatteryLevel(session.deviceId);
+                log(LogLevel.INFO, `[Session ${session.scid}] Periodic battery update: ${batteryLevel}%`);
+                client.ws.send(JSON.stringify({
+                    type: 'batteryInfo',
+                    success: true,
+                    batteryLevel: batteryLevel
+                }));
+            } catch (error) {
+                log(LogLevel.ERROR, `[Session ${session.scid}] Failed to send periodic battery update: ${error.message}`);
+            }
+        }, 60000);
 
         if (session.tunnelActive && session.deviceId) {
             const tunnelString = `localabstract:scrcpy_${session.scid}`;

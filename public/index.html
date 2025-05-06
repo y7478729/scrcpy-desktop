@@ -65,15 +65,14 @@
 								  <line x1="3" y1="3" x2="21" y2="21" stroke="red"/>
 								</svg>
                             </span>
-                            <span class="icon battery-indicator">
-								<span id="batteryLevel">69</span>%
-								<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<!--Top Tip (Centered)-->
-								  <rect x="10.25" y="2.0" width="3.5" height="2" rx="0.25" ry="0.25" stroke="currentColor" fill="none"/>
-								<!--Battery Body-->
-								  <rect x="7" y="4" width="10" height="19" fill="currentColor" rx="2" ry="2"/>
-								</svg>
-                            </span>
+							<span class="icon battery-indicator">
+								<span id="batteryLevel">50</span>%
+									<svg class="battery-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									  <rect x="7" y="4" width="10" height="19" rx="2" ry="2"/>
+									  <rect class="battery-fill" x="9.5" y="6.5" width="5" height="14" rx=".25" ry=".25" fill="currentColor"/>
+									  <rect x="10.25" y="2" width="3.5" height="2" rx=".25" ry=".25"/>
+									</svg>
+							</span>
                             <span class="clock">19:57</span>
                         </button>
                     </div>
@@ -179,7 +178,10 @@
                 <button id="flipOrientationBtn" disabled>Flip Orientation</button>
             </div>
         </div>
-        <div id="status">Ready</div>
+		<div id="logArea" class="log-area">
+			<button id="toggleLogBtn" aria-expanded="true">Hide Logs</button>
+			<div id="logContent" class="log-content"></div>
+		</div>
         <script src="/main.js"></script>
     </body>
 </html>
