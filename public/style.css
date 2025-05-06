@@ -775,7 +775,6 @@
     border-radius: 8px;
     box-shadow: var(--shadow);
     transition: var(--transition);
-    overflow: hidden;
 }
 
 #toggleLogBtn {

@@ -811,6 +811,9 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         audioMetadata: null,
         maxVolume: null,
         androidVersion: null
+        androidVersion: null,
+		currentWidth: 0,
+        currentHeight: 0
     };
     if (runOptions.video === 'true') session.expectedSockets.push('video');
     if (runOptions.audio === 'true') session.expectedSockets.push('audio');
@@ -1229,6 +1232,218 @@ function attemptIdentifyControlByDeduction(session, client) {
     }
 }
 
+class BitReader {
+    constructor(buffer) {
+        this.buffer = buffer;
+        this.bytePosition = 0;
+        this.bitPosition = 0;
+    }
+
+    readBits(n) {
+        if (n === 0) return 0;
+        if (n > 32) {
+            log(LogLevel.ERROR, "[BitReader] Attempt to read > 32 bits:", n);
+            return null;
+        }
+        let result = 0;
+        for (let i = 0; i < n; i++) {
+            if (this.bytePosition >= this.buffer.length) {
+                return null;
+            }
+            result <<= 1;
+            result |= (this.buffer[this.bytePosition] >> (7 - this.bitPosition)) & 1;
+            this.bitPosition++;
+            if (this.bitPosition === 8) {
+                this.bitPosition = 0;
+                this.bytePosition++;
+            }
+        }
+        return result;
+    }
+
+    readUE() {
+        let leadingZeroBits = 0;
+        while (this.readBits(1) === 0) {
+            leadingZeroBits++;
+            if (leadingZeroBits > 31) {
+                log(LogLevel.ERROR, "[BitReader] ue(v) - Too many leading zeros.");
+                return null;
+            }
+        }
+        if (leadingZeroBits === 0) return 0;
+        const valueSuffix = this.readBits(leadingZeroBits);
+        if (valueSuffix === null) return null;
+        return (1 << leadingZeroBits) - 1 + valueSuffix;
+    }
+
+    readSE() {
+        const codeNum = this.readUE();
+        if (codeNum === null) return null;
+        return (codeNum % 2 === 0) ? -(codeNum / 2) : (codeNum + 1) / 2;
+    }
+
+    readBool() {
+        const bit = this.readBits(1);
+        if (bit === null) return null;
+        return bit === 1;
+    }
+}
+
+function parseSPS(naluBuffer) {
+    if (!naluBuffer || naluBuffer.length < 1) {
+        log(LogLevel.WARN, "[SPS Parse] NALU buffer is too short or undefined.");
+        return null;
+    }
+
+    let offset = 0;
+    if (naluBuffer.length >= 3 && naluBuffer[0] === 0 && naluBuffer[1] === 0) {
+        if (naluBuffer[2] === 1) offset = 3;
+        else if (naluBuffer.length >= 4 && naluBuffer[2] === 0 && naluBuffer[3] === 1) offset = 4;
+    }
+
+    const rbspBuffer = naluBuffer.subarray(offset);
+    if (rbspBuffer.length < 1) {
+        log(LogLevel.WARN, "[SPS Parse] NALU buffer too short after skipping start code.");
+        return null;
+    }
+
+    const nal_unit_type = rbspBuffer[0] & 0x1F;
+    if (nal_unit_type !== 7) {
+        log(LogLevel.WARN, `[SPS Parse] Expected NAL unit type 7 (SPS), got ${nal_unit_type}.`);
+        return null;
+    }
+
+    const reader = new BitReader(rbspBuffer.subarray(1));
+
+    try {
+        const profile_idc = reader.readBits(8);
+        reader.readBits(8); // constraint_set_flags
+        reader.readBits(8); // level_idc
+        reader.readUE();    // seq_parameter_set_id
+
+        if (profile_idc === null) return null;
+
+        let chroma_format_idc = 1; // Default 4:2:0
+        let separate_colour_plane_flag = 0;
+
+        if ([100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135].includes(profile_idc)) {
+            chroma_format_idc = reader.readUE();
+            if (chroma_format_idc === null || chroma_format_idc > 3) {
+                 log(LogLevel.WARN, `[SPS Parse] Invalid chroma_format_idc: ${chroma_format_idc}`);
+                 return null;
+            }
+            if (chroma_format_idc === 3) {
+                separate_colour_plane_flag = reader.readBool();
+                if (separate_colour_plane_flag === null) return null;
+            }
+            reader.readUE(); // bit_depth_luma_minus8
+            reader.readUE(); // bit_depth_chroma_minus8
+            reader.readBool(); // qpprime_y_zero_transform_bypass_flag
+            const seq_scaling_matrix_present_flag = reader.readBool();
+            if (seq_scaling_matrix_present_flag === null) return null;
+            if (seq_scaling_matrix_present_flag) {
+                const limit = (chroma_format_idc !== 3) ? 8 : 12;
+                for (let i = 0; i < limit; i++) {
+                    if (reader.readBool()) { // seq_scaling_list_present_flag[i]
+                        const sizeOfScalingList = (i < 6) ? 16 : 64;
+                        let lastScale = 8, nextScale = 8;
+                        for (let j = 0; j < sizeOfScalingList; j++) {
+                            if (nextScale !== 0) {
+                                const delta_scale = reader.readSE();
+                                if (delta_scale === null) return null;
+                                nextScale = (lastScale + delta_scale + 256) % 256;
+                            }
+                            lastScale = (nextScale === 0) ? lastScale : nextScale;
+                        }
+                    }
+                }
+            }
+        }
+
+        reader.readUE(); // log2_max_frame_num_minus4
+        const pic_order_cnt_type = reader.readUE();
+        if (pic_order_cnt_type === null) return null;
+
+        if (pic_order_cnt_type === 0) {
+            reader.readUE(); // log2_max_pic_order_cnt_lsb_minus4
+        } else if (pic_order_cnt_type === 1) {
+            reader.readBool();   // delta_pic_order_always_zero_flag
+            reader.readSE();     // offset_for_non_ref_pic
+            reader.readSE();     // offset_for_top_to_bottom_field
+            const num_ref_frames_in_pic_order_cnt_cycle = reader.readUE();
+            if (num_ref_frames_in_pic_order_cnt_cycle === null) return null;
+            for (let i = 0; i < num_ref_frames_in_pic_order_cnt_cycle; i++) {
+                reader.readSE(); // offset_for_ref_frame[i]
+            }
+        }
+
+        reader.readUE(); // max_num_ref_frames
+        reader.readBool(); // gaps_in_frame_num_value_allowed_flag
+
+        const pic_width_in_mbs_minus1 = reader.readUE();
+        const pic_height_in_map_units_minus1 = reader.readUE();
+        const frame_mbs_only_flag = reader.readBool();
+
+        if (pic_width_in_mbs_minus1 === null || pic_height_in_map_units_minus1 === null || frame_mbs_only_flag === null) {
+            log(LogLevel.WARN, "[SPS Parse] Failed to read picture width/height parameters.");
+            return null;
+        }
+
+        if (!frame_mbs_only_flag) {
+            reader.readBool(); // mb_adaptive_frame_field_flag
+        }
+        reader.readBool(); // direct_8x8_inference_flag
+
+        const frame_cropping_flag = reader.readBool();
+        if (frame_cropping_flag === null) return null;
+        let frame_crop_left_offset = 0, frame_crop_right_offset = 0;
+        let frame_crop_top_offset = 0, frame_crop_bottom_offset = 0;
+
+        if (frame_cropping_flag) {
+            frame_crop_left_offset = reader.readUE();
+            frame_crop_right_offset = reader.readUE();
+            frame_crop_top_offset = reader.readUE();
+            frame_crop_bottom_offset = reader.readUE();
+            if (frame_crop_left_offset === null || frame_crop_right_offset === null ||
+                frame_crop_top_offset === null || frame_crop_bottom_offset === null) return null;
+        }
+
+        const pic_width_in_mbs = pic_width_in_mbs_minus1 + 1;
+        const pic_height_in_map_units = pic_height_in_map_units_minus1 + 1;
+        const frame_height_in_mbs = (2 - (frame_mbs_only_flag ? 1 : 0)) * pic_height_in_map_units;
+
+        let width = pic_width_in_mbs * 16;
+        let height = frame_height_in_mbs * 16;
+
+        if (frame_cropping_flag) {
+            let subWidthC = 1, subHeightC = 1;
+            if (separate_colour_plane_flag) {
+                 subWidthC = 1; subHeightC = 1;
+            } else if (chroma_format_idc === 1) { // 4:2:0
+                subWidthC = 2; subHeightC = 2;
+            } else if (chroma_format_idc === 2) { // 4:2:2
+                subWidthC = 2; subHeightC = 1;
+            } else if (chroma_format_idc === 3) { // 4:4:4
+                subWidthC = 1; subHeightC = 1;
+            }
+
+            const cropUnitX = subWidthC;
+            const cropUnitY = subHeightC * (2 - (frame_mbs_only_flag ? 1 : 0));
+
+            width -= (frame_crop_left_offset + frame_crop_right_offset) * cropUnitX;
+            height -= (frame_crop_top_offset + frame_crop_bottom_offset) * cropUnitY;
+        }
+
+        return {
+            width: width,
+            height: height
+        };
+
+    } catch (e) {
+        log(LogLevel.ERROR, "[SPS Parse] Error during SPS parsing:", e.message);
+        return null;
+    }
+}
 function processSingleSocket(socket, client, session) {
     const dynBuffer = socket.dynamicBuffer;
     let processedSomething = false;
@@ -1337,10 +1552,11 @@ function processSingleSocket(socket, client, session) {
                     session.unidentifiedSockets?.delete(socket.remoteId);
                     socket.state = 'STREAMING';
 
-                    const worker = new Worker(path.join(__dirname, 'controlWorker.js'), {
+                    const worker = new Worker(path.join(__dirname, 'serverControlWorker.js'), {
                         workerData: {
                             scid: session.scid,
-                            clientId: session.clientId
+                            clientId: session.clientId,
+                            CURRENT_LOG_LEVEL
                         }
                     });
                     workers.set(session.scid, worker);
@@ -1396,46 +1612,78 @@ function processSingleSocket(socket, client, session) {
                     }
                 }
                 break;
+				
+			case 'STREAMING':
+				if (!socket.type || socket.type === 'unknown') {
+					log(LogLevel.WARN, `[Streaming ${socket.remoteId}] Socket in STREAMING state but type unknown? Resetting.`);
+					socket.state = 'AWAITING_METADATA';
+					keepProcessing = true;
+					break;
+				}
 
-            case 'STREAMING':
-                if (!socket.type || socket.type === 'unknown') {
-                    log(LogLevel.WARN, `[Streaming ${socket.remoteId}] Socket in STREAMING state but type unknown? Resetting.`);
-                    socket.state = 'AWAITING_METADATA';
-                    keepProcessing = true;
-                    break;
-                }
+				if (socket.type === 'video') {
+					if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
+						const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
+						const keyFrameFlag = (dynBuffer.buffer.readUInt8(0) >> 6) & 0x1;
+						const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');						
+						const packetSize = dynBuffer.buffer.readUInt32BE(8);
+						if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
+							log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`);
+							socket.state = 'UNKNOWN';
+							socket.destroy();
+							return;
+						}
+						const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
+						if (dynBuffer.length >= totalPacketLength) {
+							const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
 
-                if (socket.type === 'video') {
-                    if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
-                        const packetSize = dynBuffer.buffer.readUInt32BE(8);
-                        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
-                            log(LogLevel.ERROR, `[${socket.remoteId} ${session.scid} - ${socket.type}] Invalid packet size: ${packetSize}. Closing.`);
-                            socket.state = 'UNKNOWN';
-                            socket.destroy();
-                            return;
-                        }
-                        const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
-                        if (dynBuffer.length >= totalPacketLength) {
-                            const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
-                            const typeBuffer = Buffer.alloc(1);
-                            typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
-                            log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending video packet (${payload.length} bytes)`);
-                            client.ws.send(Buffer.concat([typeBuffer, payload]), {
-                                binary: true
-                            });
-                            dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
-                            dynBuffer.length -= totalPacketLength;
-                            processedSomething = true;
-                            keepProcessing = true;
-                        } else {
-                            log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`);
-                            keepProcessing = false;
-                        }
-                    } else {
-                        log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`);
-                        keepProcessing = false;
-                    }
-                } else if (socket.type === 'audio') {
+                            if (configFlag) {
+                                log(LogLevel.DEBUG, `[Session ${session.scid}] Config Packet (SPS/PPS) Data (${payload.length} bytes): ${payload.toString('hex').toUpperCase()}`);
+                                
+                                const resolutionInfo = parseSPS(payload);
+                                if (resolutionInfo) {
+                                    const newWidth = resolutionInfo.width;
+                                    const newHeight = resolutionInfo.height;
+                                    log(LogLevel.INFO, `[Session ${session.scid}] Parsed Resolution from SPS: ${newWidth}x${newHeight}`);
+
+                                    if (session.currentWidth !== newWidth || session.currentHeight !== newHeight) {
+                                        log(LogLevel.INFO, `[Session ${session.scid}] Resolution changed from ${session.currentWidth}x${session.currentHeight} to ${newWidth}x${newHeight}. Sending update.`);
+                                        session.currentWidth = newWidth;
+                                        session.currentHeight = newHeight;
+
+                                        if (client && client.ws?.readyState === WebSocket.OPEN) {
+                                            client.ws.send(JSON.stringify({
+                                                type: 'resolutionChange',
+                                                width: newWidth,
+                                                height: newHeight
+                                            }));
+                                        }
+                                    }
+                                } else {
+                                    log(LogLevel.WARN, `[Session ${session.scid}] Failed to parse SPS for resolution from config packet.`);
+                                }
+                            }
+
+							const typeBuffer = Buffer.alloc(1);
+							typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
+							log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Sending video packet (${payload.length} bytes, Config: ${configFlag}, KeyFrame: ${keyFrameFlag}, PTS: ${pts})`);
+							client.ws.send(Buffer.concat([typeBuffer, payload]), {
+								binary: true
+							});
+							dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
+							dynBuffer.length -= totalPacketLength;
+							processedSomething = true;
+							keepProcessing = true;
+						} else {
+							log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${totalPacketLength} bytes for packet, have ${dynBuffer.length}. Waiting.`);
+							keepProcessing = false;
+						}
+					} else {
+						log(LogLevel.DEBUG, `[Streaming ${socket.remoteId}] Need ${PACKET_HEADER_LENGTH} bytes for header, have ${dynBuffer.length}. Waiting.`);
+						keepProcessing = false;
+					}
+				} 
+			else if (socket.type === 'audio') {
                     if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
                         const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
                         const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
