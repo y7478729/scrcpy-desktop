@@ -58,20 +58,12 @@ const CODEC_IDS = {
 
 const CODEC_METADATA_LENGTHS = {
     [CODEC_IDS.H264]: VIDEO_METADATA_LENGTH,
-    [CODEC_IDS.H265]: VIDEO_METADATA_LENGTH,
-    [CODEC_IDS.AV1]: VIDEO_METADATA_LENGTH,
-    [CODEC_IDS.OPUS]: AUDIO_METADATA_LENGTH,
-    [CODEC_IDS.AAC]: AUDIO_METADATA_LENGTH,
-    [CODEC_IDS.RAW]: AUDIO_METADATA_LENGTH,
+    [CODEC_IDS.AAC]: AUDIO_METADATA_LENGTH
 };
 
 const CODEC_SOCKET_TYPES = {
     [CODEC_IDS.H264]: 'video',
-    [CODEC_IDS.H265]: 'video',
-    [CODEC_IDS.AV1]: 'video',
-    [CODEC_IDS.OPUS]: 'audio',
-    [CODEC_IDS.AAC]: 'audio',
-    [CODEC_IDS.RAW]: 'audio',
+    [CODEC_IDS.AAC]: 'audio'
 };
 
 const adb = new adbkit.Client();
@@ -225,6 +217,12 @@ function createWebSocketServer() {
                         case 'disconnect':
                             await handleDisconnect(clientId);
                             break;
+						case 'volume':
+							await handleVolumeCommand(clientId, ws, message);
+							break;
+						case 'getVolume':
+							await handleGetVolumeCommand(clientId, ws, message);
+							break;
                         default:
                             log(LogLevel.WARN, `[WebSocket] Unknown action from ${clientId}: ${message.action}`);
                             ws.send(JSON.stringify({
@@ -254,6 +252,223 @@ function createWebSocketServer() {
     });
     log(LogLevel.INFO, `[System] WebSocket server listening on port ${WEBSOCKET_PORT}`);
     return wss;
+}
+
+async function getMediaVolumeInfo(deviceId) {
+    log(LogLevel.DEBUG, `[VolumeInfo] Querying media volume info for device ${deviceId}`);
+
+    const session = Array.from(sessions.values()).find(s => s.deviceId === deviceId);
+    if (!session) {
+        throw new Error(`No session found for device ${deviceId}`);
+    }
+
+    // Get Android version
+    let androidVersion;
+    if (session.androidVersion) {
+        androidVersion = session.androidVersion;
+        log(LogLevel.DEBUG, `[VolumeInfo] Using cached Android version: ${androidVersion}`);
+    } else {
+        try {
+            const { stdout } = await executeCommand(
+                `adb -s ${deviceId} shell getprop ro.build.version.release`,
+                `Get Android version (Device: ${deviceId})`
+            );
+            const versionMatch = stdout.trim().match(/^(\d+)/);
+            androidVersion = versionMatch ? parseInt(versionMatch[1], 10) : NaN;
+            if (isNaN(androidVersion)) {
+                throw new Error(`Invalid Android version: ${stdout.trim()}`);
+            }
+            session.androidVersion = androidVersion;
+            log(LogLevel.DEBUG, `[VolumeInfo] Cached Android version: ${androidVersion}`);
+        } catch (error) {
+            throw new Error(`Failed to get Android version: ${error.message}`);
+        }
+    }
+
+    // Query volume info
+    let maxVolume, currentVolume;
+    if (session.maxVolume) {
+        maxVolume = session.maxVolume;
+        log(LogLevel.DEBUG, `[VolumeInfo] Using cached max volume: ${maxVolume}`);
+    }
+
+    if (androidVersion <= 10) {
+        try {
+            const { stdout, stderr } = await executeCommand(
+                `adb -s ${deviceId} shell media volume --get`,
+                `Get media volume (Device: ${deviceId})`
+            );
+            log(LogLevel.DEBUG, `[VolumeInfo] Raw media volume output: ${stdout}`);
+            if (stderr) {
+                log(LogLevel.WARN, `[VolumeInfo] Command stderr: ${stderr.trim()}`);
+            }
+            const match = stdout.match(/volume is (\d+) in range \[(\d+)\.\.(\d+)\]/);
+            if (!match) {
+                throw new Error(`Unexpected volume output format: ${stdout}`);
+            }
+            currentVolume = parseInt(match[1], 10);
+            if (!session.maxVolume) {
+                maxVolume = parseInt(match[3], 10);
+                session.maxVolume = maxVolume;
+                log(LogLevel.DEBUG, `[VolumeInfo] Cached max volume: ${maxVolume}`);
+            }
+        } catch (error) {
+            log(LogLevel.ERROR, `[VolumeInfo] Failed to query volume for Android 10 or lower: ${error.message}`);
+            throw new Error(`Failed to get volume: ${error.message}`);
+        }
+    } else {
+        try {
+            const { stdout, stderr } = await executeCommand(
+                `adb -s ${deviceId} shell cmd media_session volume --get --stream 3`,
+                `Get media volume (Device: ${deviceId})`
+            );
+            log(LogLevel.DEBUG, `[VolumeInfo] Raw media_session output: ${stdout}`);
+            if (stderr) {
+                log(LogLevel.WARN, `[VolumeInfo] Command stderr: ${stderr.trim()}`);
+            }
+            const match = stdout.match(/volume is (\d+) in range \[(\d+)\.\.(\d+)\]|\[(\d+), (\d+)\]/);
+            if (!match) {
+                throw new Error(`Unexpected volume output format: ${stdout}`);
+            }
+            currentVolume = parseInt(match[1] || match[4], 10);
+            if (!session.maxVolume) {
+                maxVolume = parseInt(match[3] || match[5], 10);
+                session.maxVolume = maxVolume;
+                log(LogLevel.DEBUG, `[VolumeInfo] Cached max volume: ${maxVolume}`);
+            }
+        } catch (error) {
+            log(LogLevel.ERROR, `[VolumeInfo] Failed to query volume for Android 11+: ${error.message}`);
+            throw new Error(`Failed to get volume: ${error.message}`);
+        }
+    }
+
+    if (isNaN(maxVolume) || isNaN(currentVolume) || maxVolume < 1) {
+        throw new Error(`Invalid volume info: max=${maxVolume}, current=${currentVolume}`);
+    }
+
+    log(LogLevel.DEBUG, `[VolumeInfo] Retrieved: currentVolume=${currentVolume}, maxVolume=${maxVolume}`);
+    return { maxVolume, currentVolume };
+}
+
+async function setMediaVolume(deviceId, percentage) {
+    log(LogLevel.DEBUG, `[SetVolume] Setting media volume to ${percentage}% for device ${deviceId}`);
+
+    let maxVolume;
+    const session = Array.from(sessions.values()).find(s => s.deviceId === deviceId);
+    if (!session) {
+        throw new Error(`No session found for device ${deviceId}`);
+    }
+
+    if (session.maxVolume) {
+        maxVolume = session.maxVolume;
+    } else {
+        try {
+            const volumeInfo = await getMediaVolumeInfo(deviceId);
+            maxVolume = volumeInfo.maxVolume;
+        } catch (error) {
+            log(LogLevel.ERROR, `[SetVolume] Failed to get max volume: ${error.message}`);
+            throw error;
+        }
+    }
+
+    if (isNaN(maxVolume) || maxVolume < 1) {
+         throw new Error(`Invalid max volume info: ${maxVolume}`);
+    }
+
+    const targetVolume = Math.round((percentage / 100) * maxVolume);
+    log(LogLevel.DEBUG, `[SetVolume] Mapped ${percentage}% to volume level ${targetVolume} (max: ${maxVolume})`);
+
+    const androidVersion = session.androidVersion;
+    if (!androidVersion) {
+        throw new Error(`Android version not cached for device ${deviceId}`);
+    }
+
+    try {
+        let command;
+        if (androidVersion <= 10) {
+            command = `adb -s ${deviceId} shell media volume --set ${targetVolume}`;
+        } else {
+            command = `adb -s ${deviceId} shell cmd media_session volume --set ${targetVolume}`;
+        }
+        await executeCommand(command, `Set media volume to ${targetVolume} (Device: ${deviceId})`);
+        log(LogLevel.INFO, `[SetVolume] Volume set command executed for ${percentage}% (Target Level: ${targetVolume})`);
+    } catch (error) {
+        log(LogLevel.ERROR, `[SetVolume] Failed to set volume: ${error.message}`);
+        throw error;
+    }
+}
+
+async function handleGetVolumeCommand(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client || !client.session) {
+        log(LogLevel.WARN, `[GetVolume ${clientId}] No active session for client`);
+        ws.send(JSON.stringify({
+            type: 'volumeInfo',
+            success: false,
+            error: 'No active session'
+        }));
+        return;
+    }
+
+    const session = sessions.get(client.session);
+    if (!session || !session.deviceId) {
+        log(LogLevel.WARN, `[GetVolume ${clientId}] No device associated with session ${client.session}`);
+        ws.send(JSON.stringify({
+            type: 'volumeInfo',
+            success: false,
+            error: 'No device found'
+        }));
+        return;
+    }
+
+    try {
+        const { maxVolume, currentVolume } = await getMediaVolumeInfo(session.deviceId);
+        const volumePercentage = Math.round((currentVolume / maxVolume) * 100);
+        log(LogLevel.INFO, `[GetVolume ${clientId}] Current volume: ${volumePercentage}% for device ${session.deviceId}`);
+        ws.send(JSON.stringify({
+            type: 'volumeInfo',
+            success: true,
+            volume: volumePercentage
+        }));
+    } catch (error) {
+        log(LogLevel.ERROR, `[GetVolume ${clientId}] Failed to get volume: ${error.message}`);
+        ws.send(JSON.stringify({
+            type: 'volumeInfo',
+            success: false,
+            error: error.message
+        }));
+    }
+}
+
+async function handleVolumeCommand(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client || !client.session) {
+        log(LogLevel.WARN, `[Volume ${clientId}] No active session for client`);
+        ws.send(JSON.stringify({ type: 'volumeResponse', success: false, value: message.value, error: 'No active session' }));
+        return;
+    }
+
+    const session = sessions.get(client.session);
+    if (!session || !session.deviceId) {
+        log(LogLevel.WARN, `[Volume ${clientId}] No device associated with session ${client.session}`);
+        ws.send(JSON.stringify({ type: 'volumeResponse', success: false, value: message.value, error: 'No device found' }));
+        return;
+    }
+
+    try {
+        const value = parseInt(message.value, 10);
+        if (isNaN(value) || value < 0 || value > 100) {
+            throw new Error(`Invalid volume value: ${message.value}`);
+        }
+
+        await setMediaVolume(session.deviceId, value);
+        log(LogLevel.INFO, `[Volume ${clientId}] Successfully executed volume set command for ${value}%`);
+        ws.send(JSON.stringify({ type: 'volumeResponse', success: true, requestedValue: value }));
+
+    } catch (error) {
+        log(LogLevel.ERROR, `[Volume ${clientId}] Failed to set volume: ${error.message}`);
+        ws.send(JSON.stringify({ type: 'volumeResponse', success: false, value: message.value, error: error.message }));
+    }
 }
 
 async function executeCommand(command, description) {
@@ -381,6 +596,8 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         streamingStartedNotified: false,
         unidentifiedSockets: new Map(),
         audioMetadata: null,
+		maxVolume: null,
+        androidVersion: null
     };
     if (runOptions.video === 'true') session.expectedSockets.push('video');
     if (runOptions.audio === 'true') session.expectedSockets.push('audio');

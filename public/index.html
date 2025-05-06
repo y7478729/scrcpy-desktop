@@ -15,6 +15,69 @@
             <div id="videoPlaceholder">Waiting for stream...</div>
             <video id="screen" autoplay disablePictureInPicture></video>
             <div id="videoBorder"></div>
+
+            <div class="custom-taskbar">
+                 <div class="taskbar-main-content">
+                    <div class="taskbar-left">
+                        <button class="nav-button back-button" aria-label="Back">←</button>
+                        <button class="nav-button home-button" aria-label="Home">🏠</button>
+                        <button class="nav-button recents-button" aria-label="Recents">☰</button>
+                    </div>
+                    <div class="taskbar-right-main">
+                         <button id="speakerButton" class="icon-button" aria-label="Audio Settings">🔊</button>
+                         <button id="quickSettingsTrigger" class="quick-settings-trigger" aria-label="Quick Settings">
+                             <span class="icon wifi-indicator">📶</span>
+                             <span class="icon battery-indicator">🔋 <span id="batteryLevel">63</span>%</span>
+                             <span class="clock">19:57</span>
+                         </button>
+                    </div>
+                </div>
+                 <div class="taskbar-pin-area">
+                    <button id="pinToggleButton" class="pin-toggle-button" aria-label="Pin Taskbar">▼</button>
+                 </div>
+            </div>
+
+            <div id="audioPanel" class="quick-panel">
+                <div class="panel-content">
+                    <div class="slider-group">
+                        <span class="icon">🔊</span>
+                        <label for="mediaVolume">Media</label>
+                        <input type="range" id="mediaVolume" name="mediaVolume" min="0" max="100" value="75">
+                    </div>
+                </div>
+            </div>
+
+            <div id="quickSettingsPanel" class="quick-panel">
+                 <div class="panel-header">
+                     <span>Quick Settings</span>
+                 </div>
+                <div class="panel-grid">
+                     <button id="wifiToggleBtn" class="panel-toggle-button active" aria-pressed="true">
+                         <span class="icon">📶</span>
+                         <span>Wi-Fi</span>
+                     </button>
+                      <button class="panel-toggle-button" disabled>
+                         <span class="icon">🔆</span>
+                         <span>Brightness</span>
+                     </button>
+                     <button class="panel-toggle-button" disabled>
+                         <span class="icon">🔄</span>
+                         <span>Rotation</span>
+                     </button>
+                     <button class="panel-toggle-button" disabled>
+                         <span class="icon">✈️</span>
+                         <span>Flight Mode</span>
+                     </button>
+                      <button class="panel-toggle-button" disabled>
+                         <span class="icon">🔦</span>
+                         <span>Torch</span>
+                     </button>
+                     <button class="panel-toggle-button" disabled>
+                         <span class="icon">🌙</span>
+                         <span>Dark Mode</span>
+                     </button>
+                 </div>
+            </div>
         </div>
         <div class="controls">
             <div class="settings">
@@ -43,7 +106,7 @@
                 <button id="startBtn">Start Stream</button>
                 <button id="stopBtn" disabled>Stop Stream</button>
                 <button id="fullscreenBtn">Fullscreen</button>
-                <button id="flipOrientationBtn" disabled>Flip Orientation</button> <!-- ADD THIS -->
+                <button id="flipOrientationBtn" disabled>Flip Orientation</button>
             </div>
         </div>
         <div id="status">Ready</div>

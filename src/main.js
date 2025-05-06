@@ -1,11 +1,8 @@
 const VideoConverter = require('h264-converter').default;
-const {
-    setLogger
-} = require('h264-converter');
+const { setLogger } = require('h264-converter');
 
 setLogger(() => {}, console.error);
 
-// Constants (Video)
 const CHECK_STATE_INTERVAL_MS = 250;
 const MAX_SEEK_WAIT_MS = 1500;
 const MAX_TIME_TO_RECOVER = 200;
@@ -18,16 +15,9 @@ const DEFAULT_FRAMES_PER_SECOND = 60;
 const DEFAULT_FRAMES_PER_FRAGMENT = 1;
 const NALU_TYPE_IDR = 5;
 
-// Constants (Audio/Control)
 const AUDIO_BYTES_PER_SAMPLE = 2;
-const BINARY_TYPES = {
-    VIDEO: 0,
-    AUDIO: 1
-};
-const CODEC_IDS = {
-    H264: 0x68323634,
-    AAC: 0x00616163
-};
+const BINARY_TYPES = { VIDEO: 0, AUDIO: 1 };
+const CODEC_IDS = { H264: 0x68323634, AAC: 0x00616163 };
 const CONTROL_MSG_TYPE_INJECT_TOUCH_EVENT = 2;
 const AMOTION_EVENT_ACTION_DOWN = 0;
 const AMOTION_EVENT_ACTION_UP = 1;
@@ -37,7 +27,11 @@ const AMOTION_EVENT_BUTTON_SECONDARY = 2;
 const AMOTION_EVENT_BUTTON_TERTIARY = 4;
 const POINTER_ID_MOUSE = -1n;
 
-// DOM Elements
+let volumeChangeTimeout = null;
+const VOLUME_THROTTLE_MS = 150;
+let lastVolumeSendTime = 0;
+let pendingVolumeValue = null;
+
 const elements = {
     startButton: document.getElementById('startBtn'),
     stopButton: document.getElementById('stopBtn'),
@@ -56,7 +50,6 @@ const elements = {
     flipOrientationBtn: document.getElementById('flipOrientationBtn'),
 };
 
-// State
 let state = {
     ws: null,
     converter: null,
@@ -85,15 +78,11 @@ let state = {
     controlEnabledAtStart: false,
     isMouseDown: false,
     currentMouseButtons: 0,
-    lastMousePosition: {
-        x: 0,
-        y: 0
-    },
+    lastMousePosition: { x: 0, y: 0 },
     nextAudioTime: 0,
     totalAudioFrames: 0,
 };
 
-// Utility Functions
 const log = (message) => {
     console.log(message);
 };
@@ -126,8 +115,7 @@ const updateVideoBorder = () => {
     const elementAspectRatio = elementWidth / elementHeight;
 
     let renderedVideoWidth, renderedVideoHeight;
-    let offsetX = 0,
-        offsetY = 0;
+    let offsetX = 0, offsetY = 0;
 
     if (elementAspectRatio > videoAspectRatio) {
         renderedVideoHeight = elementHeight;
@@ -157,15 +145,12 @@ const isIFrame = (frameData) => {
     return frameData.length > offset && (frameData[offset] & 0x1F) === NALU_TYPE_IDR;
 };
 
-// Video Handling
 const initVideoConverter = () => {
     const fps = parseInt(elements.maxFpsSelect.value) || DEFAULT_FRAMES_PER_SECOND;
     state.converter = new VideoConverter(elements.videoElement, fps, DEFAULT_FRAMES_PER_FRAGMENT);
     state.sourceBufferInternal = state.converter?.sourceBuffer || null;
 
-    elements.videoElement.addEventListener('canplay', onVideoCanPlay, {
-        once: true
-    });
+    elements.videoElement.addEventListener('canplay', onVideoCanPlay, { once: true });
     elements.videoElement.removeEventListener('error', onVideoError);
     elements.videoElement.addEventListener('error', onVideoError);
 };
@@ -191,9 +176,7 @@ const cleanSourceBuffer = () => {
     try {
         console.log(`Removing source buffer range: ${state.removeStart.toFixed(3)} - ${state.removeEnd.toFixed(3)}`);
         state.sourceBufferInternal.remove(state.removeStart, state.removeEnd);
-        state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, {
-            once: true
-        });
+        state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
     } catch (e) {
         console.error(`Failed to clean source buffer: ${e}`);
         state.sourceBufferInternal?.removeEventListener('updateend', cleanSourceBuffer);
@@ -222,14 +205,11 @@ const checkForIFrameAndCleanBuffer = (frameData) => {
                 state.removeStart = start;
                 state.removeEnd = end;
             }
-            state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, {
-                once: true
-            });
+            state.sourceBufferInternal.addEventListener('updateend', cleanSourceBuffer, { once: true });
         }
     }
 };
 
-// Video Playback Quality
 const getVideoPlaybackQuality = () => {
     const video = elements.videoElement;
     if (!video) return null;
@@ -284,9 +264,7 @@ const calculateMomentumStats = () => {
 const checkForBadState = () => {
     if (!state.isRunning || !state.converter) return;
 
-    const {
-        currentTime
-    } = elements.videoElement;
+    const { currentTime } = elements.videoElement;
     const now = Date.now();
     let hasReasonToJump = false;
 
@@ -376,7 +354,6 @@ const checkForBadState = () => {
     }
 };
 
-// Audio Handling (Unchanged)
 const setupAudioPlayer = (codecId, metadata) => {
     if (codecId !== CODEC_IDS.AAC) {
         log(`Unsupported audio codec ID: 0x${codecId.toString(16)}`);
@@ -406,25 +383,22 @@ const setupAudioPlayer = (codecId, metadata) => {
                         sampleRate
                     );
 
-					const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
-					const isInterleaved = audioData.format === 'f32-interleaved' || (isFirefox && audioData.format === 'f32');
-					if (isInterleaved) {
-						const interleavedData = new Float32Array(audioData.numberOfFrames * audioData.numberOfChannels);
-						audioData.copyTo(interleavedData, { planeIndex: 0 }); // Always planeIndex: 0 for interleaved
-						for (let channel = 0; channel < audioData.numberOfChannels; channel++) {
-							const channelData = buffer.getChannelData(channel);
-							for (let i = 0; i < audioData.numberOfFrames; i++) {
-								channelData[i] = interleavedData[i * audioData.numberOfChannels + channel];
-							}
-						}
-					} else if (audioData.format === 'f32-planar' || (!isFirefox && audioData.format === 'f32')) {
-						for (let channel = 0; channel < audioData.numberOfChannels; channel++) {
-							audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
-						}
-					} else {
-						console.error(`Unsupported audio format: ${audioData.format}`);
-						return;
-					}
+                    const isInterleaved = audioData.format === 'f32' || audioData.format === 'f32-interleaved';
+                    if (isInterleaved) {
+                        const interleavedData = new Float32Array(audioData.numberOfFrames * numberOfChannels);
+                        audioData.copyTo(interleavedData, { planeIndex: 0 });
+
+                        for (let channel = 0; channel < numberOfChannels; channel++) {
+                            const channelData = buffer.getChannelData(channel);
+                            for (let i = 0; i < audioData.numberOfFrames; i++) {
+                                channelData[i] = interleavedData[i * numberOfChannels + channel];
+                            }
+                        }
+                    } else {
+                        for (let channel = 0; channel < numberOfChannels; channel++) {
+                            audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
+                        }
+                    }
 
                     const source = state.audioContext.createBufferSource();
                     source.buffer = buffer;
@@ -484,7 +458,6 @@ const handleAudioData = (arrayBuffer) => {
     }
 };
 
-// Coordinate Scaling Function (Unchanged)
 const getScaledCoordinates = (event) => {
     const video = elements.videoElement;
     const screenInfo = {
@@ -497,16 +470,10 @@ const getScaledCoordinates = (event) => {
     if (!screenInfo || !screenInfo.videoSize || !screenInfo.videoSize.width || !screenInfo.videoSize.height) {
         return null;
     }
-    const {
-        width,
-        height
-    } = screenInfo.videoSize;
+    const { width, height } = screenInfo.videoSize;
     const target = video;
     const rect = target.getBoundingClientRect();
-    let {
-        clientWidth,
-        clientHeight
-    } = target;
+    let { clientWidth, clientHeight } = target;
 
     let touchX = event.clientX - rect.left;
     let touchY = event.clientY - rect.top;
@@ -538,13 +505,9 @@ const getScaledCoordinates = (event) => {
     deviceX = Math.max(0, Math.min(width, deviceX));
     deviceY = Math.max(0, Math.min(height, deviceY));
 
-    return {
-        x: deviceX,
-        y: deviceY
-    };
+    return { x: deviceX, y: deviceY };
 };
 
-// Control Message Sending (Unchanged)
 const sendControlMessage = (buffer) => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN && state.controlEnabledAtStart) {
         try {
@@ -575,7 +538,6 @@ const sendMouseEvent = (action, buttons, x, y) => {
     sendControlMessage(buffer);
 };
 
-// Mouse Event Handlers (Unchanged)
 const handleMouseDown = (event) => {
     if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
     event.preventDefault();
@@ -583,17 +545,10 @@ const handleMouseDown = (event) => {
     state.isMouseDown = true;
     let buttonFlag = 0;
     switch (event.button) {
-        case 0:
-            buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY;
-            break;
-        case 1:
-            buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY;
-            break;
-        case 2:
-            buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY;
-            break;
-        default:
-            return;
+        case 0: buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY; break;
+        case 1: buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY; break;
+        case 2: buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY; break;
+        default: return;
     }
     state.currentMouseButtons |= buttonFlag;
 
@@ -607,24 +562,21 @@ const handleMouseDown = (event) => {
 };
 
 const handleMouseUp = (event) => {
+    // Add this check at the very beginning
+    if (!state.isMouseDown) return; // Interaction didn't start on the video element
+
     if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
     event.preventDefault();
 
     let buttonFlag = 0;
     switch (event.button) {
-        case 0:
-            buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY;
-            break;
-        case 1:
-            buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY;
-            break;
-        case 2:
-            buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY;
-            break;
-        default:
-            return;
+        case 0: buttonFlag = AMOTION_EVENT_BUTTON_PRIMARY; break;
+        case 1: buttonFlag = AMOTION_EVENT_BUTTON_TERTIARY; break;
+        case 2: buttonFlag = AMOTION_EVENT_BUTTON_SECONDARY; break;
+        default: return;
     }
 
+    // This check might now be redundant because of the initial check, but keep for safety
     if (!(state.currentMouseButtons & buttonFlag)) {
         return;
     }
@@ -637,9 +589,11 @@ const handleMouseUp = (event) => {
     state.currentMouseButtons &= ~buttonFlag;
 
     if (state.currentMouseButtons === 0) {
-        state.isMouseDown = false;
+        state.isMouseDown = false; // Reset state AFTER sending message
     } else {
-        sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, finalCoords.x, finalCoords.y);
+         // Optional: If other buttons are still held, send a move event?
+         // This might not be necessary depending on desired behavior.
+        // sendMouseEvent(AMOTION_EVENT_ACTION_MOVE, state.currentMouseButtons, finalCoords.x, finalCoords.y);
     }
 };
 
@@ -667,7 +621,6 @@ const handleMouseLeave = (event) => {
     state.currentMouseButtons = 0;
 };
 
-// Streaming
 const startStreaming = () => {
     if (state.isRunning || (state.ws && state.ws.readyState === WebSocket.OPEN)) {
         log('Cannot start stream: Already running or WebSocket open');
@@ -687,37 +640,14 @@ const startStreaming = () => {
     state.controlEnabledAtStart = elements.enableControlInput.checked;
 
     Object.assign(state, {
-        ws: null,
-        converter: null,
-        audioContext: null,
-        audioDecoder: null,
-        sourceBufferInternal: null,
-        checkStateIntervalId: null,
-        currentTimeNotChangedSince: -1,
-        bigBufferSince: -1,
-        aheadOfBufferSince: -1,
-        lastVideoTime: -1,
-        seekingSince: -1,
-        removeStart: -1,
-        removeEnd: -1,
-        receivedFirstAudioPacket: false,
-        audioMetadata: null,
-        videoStats: [],
-        inputBytes: [],
-        momentumQualityStats: null,
-        noDecodedFramesSince: -1,
-        isMouseDown: false,
-        currentMouseButtons: 0,
-        lastMousePosition: {
-            x: 0,
-            y: 0
-        },
-        nextAudioTime: 0,
-        totalAudioFrames: 0,
-        deviceWidth: 0,
-        deviceHeight: 0,
-        videoResolution: 'Unknown',
-        isRunning: true,
+        ws: null, converter: null, audioContext: null, audioDecoder: null,
+        sourceBufferInternal: null, checkStateIntervalId: null, currentTimeNotChangedSince: -1,
+        bigBufferSince: -1, aheadOfBufferSince: -1, lastVideoTime: -1, seekingSince: -1,
+        removeStart: -1, removeEnd: -1, receivedFirstAudioPacket: false, audioMetadata: null,
+        videoStats: [], inputBytes: [], momentumQualityStats: null, noDecodedFramesSince: -1,
+        isMouseDown: false, currentMouseButtons: 0, lastMousePosition: { x: 0, y: 0 },
+        nextAudioTime: 0, totalAudioFrames: 0, deviceWidth: 0, deviceHeight: 0,
+        videoResolution: 'Unknown', isRunning: true,
     });
 
     state.ws = new WebSocket(`ws://${window.location.hostname}:8080`);
@@ -754,8 +684,7 @@ const startStreaming = () => {
                         state.videoResolution = `${message.width}x${message.height}`;
                         log(`Video Info: Codec=0x${message.codecId.toString(16)}, ${state.videoResolution}`);
                         elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
-                            `${state.deviceWidth} / ${state.deviceHeight}` :
-                            '9 / 16';
+                            `${state.deviceWidth} / ${state.deviceHeight}` : '9 / 16';
                         elements.videoPlaceholder.classList.add('hidden');
                         elements.videoElement.classList.add('visible');
                         if (state.converter) {
@@ -797,6 +726,25 @@ const startStreaming = () => {
                             console.error(`Error processing device message: ${e}`);
                         }
                         break;
+                    case 'volumeResponse':
+                        if (message.success) {
+                            updateStatus(`Volume command acknowledged for ${message.requestedValue}%`);
+                        } else {
+                            updateStatus(`Failed to set volume: ${message.error}`);                        }
+                        break;
+
+					case 'volumeInfo':
+						if (message.success) {
+							mediaVolumeSlider.value = message.volume;
+							updateSliderBackground(mediaVolumeSlider);
+							updateSpeakerIcon();
+							updateStatus(`Current volume: ${message.volume}%`);
+							log(`Received volume info: ${message.volume}%`);
+						} else {
+							updateStatus(`Failed to get volume: ${message.error}`);
+							log(`Failed to get volume: ${message.error}`);
+						}
+						break;
                     default:
                         log(`Unknown message type: ${message.type}`);
                 }
@@ -812,10 +760,7 @@ const startStreaming = () => {
             const payloadUint8 = new Uint8Array(payload);
 
             if (type === BINARY_TYPES.VIDEO && state.converter) {
-                state.inputBytes.push({
-                    timestamp: Date.now(),
-                    bytes: payload.byteLength
-                });
+                state.inputBytes.push({ timestamp: Date.now(), bytes: payload.byteLength });
                 state.converter.appendRawData(payloadUint8);
                 checkForIFrameAndCleanBuffer(payloadUint8);
             } else if (type === BINARY_TYPES.AUDIO && elements.enableAudioInput.checked) {
@@ -846,9 +791,7 @@ const stopStreaming = (sendDisconnect = true) => {
 
     if (state.ws && state.ws.readyState === WebSocket.OPEN && sendDisconnect) {
         try {
-            state.ws.send(JSON.stringify({
-                action: 'disconnect'
-            }));
+            state.ws.send(JSON.stringify({ action: 'disconnect' }));
         } catch (e) {
             console.error("Error sending disconnect message:", e);
         }
@@ -912,30 +855,14 @@ const stopStreaming = (sendDisconnect = true) => {
     }
 
     Object.assign(state, {
-        currentTimeNotChangedSince: -1,
-        bigBufferSince: -1,
-        aheadOfBufferSince: -1,
-        lastVideoTime: -1,
-        seekingSince: -1,
-        removeStart: -1,
-        removeEnd: -1,
-        videoStats: [],
-        inputBytes: [],
-        momentumQualityStats: null,
-        noDecodedFramesSince: -1,
-        isMouseDown: false,
-        currentMouseButtons: 0,
-        lastMousePosition: {
-            x: 0,
-            y: 0
-        },
-        deviceWidth: 0,
-        deviceHeight: 0,
-        videoResolution: 'Unknown',
+        currentTimeNotChangedSince: -1, bigBufferSince: -1, aheadOfBufferSince: -1,
+        lastVideoTime: -1, seekingSince: -1, removeStart: -1, removeEnd: -1,
+        videoStats: [], inputBytes: [], momentumQualityStats: null, noDecodedFramesSince: -1,
+        isMouseDown: false, currentMouseButtons: 0, lastMousePosition: { x: 0, y: 0 },
+        deviceWidth: 0, deviceHeight: 0, videoResolution: 'Unknown',
     });
 };
 
-// Event Listeners (Unchanged)
 elements.startButton.addEventListener('click', startStreaming);
 elements.stopButton.addEventListener('click', () => stopStreaming(true));
 elements.themeToggle.addEventListener('click', () => {
@@ -960,9 +887,9 @@ showThemeToggle();
 elements.fullscreenBtn.addEventListener('click', () => {
     if (!document.fullscreenElement) {
         if (state.isRunning && elements.videoElement.classList.contains('visible')) {
-            elements.videoElement.requestFullscreen().catch(e => console.error(`Fullscreen error: ${e}`));
+             elements.streamArea.requestFullscreen().catch(e => console.error(`Fullscreen error: ${e}`));
         } else {
-            log("Cannot enter fullscreen: Stream not running");
+            log("Cannot enter fullscreen: Stream not running or video not visible");
         }
     } else {
         document.exitFullscreen();
@@ -970,8 +897,10 @@ elements.fullscreenBtn.addEventListener('click', () => {
 });
 
 document.addEventListener('fullscreenchange', () => {
-    elements.videoElement.classList.toggle('fullscreen', document.fullscreenElement === elements.videoElement);
-    log(document.fullscreenElement ? 'Entered fullscreen' : 'Exited fullscreen');
+    const isFullscreen = document.fullscreenElement === elements.streamArea;
+    elements.streamArea.classList.toggle('in-fullscreen-mode', isFullscreen);
+    log(isFullscreen ? 'Entered fullscreen' : 'Exited fullscreen');
+    requestAnimationFrame(updateVideoBorder);
 });
 
 elements.flipOrientationBtn.addEventListener('click', () => {
@@ -988,8 +917,7 @@ elements.flipOrientationBtn.addEventListener('click', () => {
 
         log(`New orientation: ${state.deviceWidth}x${state.deviceHeight}`);
         elements.streamArea.style.aspectRatio = state.deviceWidth > 0 && state.deviceHeight > 0 ?
-            `${state.deviceWidth} / ${state.deviceHeight}` :
-            '9 / 16';
+            `${state.deviceWidth} / ${state.deviceHeight}` : '9 / 16';
 
         requestAnimationFrame(() => {
             updateVideoBorder();
@@ -1020,7 +948,234 @@ const resizeObserver = new ResizeObserver(() => {
 });
 resizeObserver.observe(elements.videoElement);
 
-// Initialize
+
+const taskbar = document.querySelector('.custom-taskbar');
+const taskbarMainContent = taskbar.querySelector('.taskbar-main-content');
+const taskbarPinArea = taskbar.querySelector('.taskbar-pin-area');
+const backButton = taskbar.querySelector('.back-button');
+const homeButton = taskbar.querySelector('.home-button');
+const recentsButton = taskbar.querySelector('.recents-button');
+const speakerButton = document.getElementById('speakerButton');
+const quickSettingsTrigger = document.getElementById('quickSettingsTrigger');
+const wifiIndicator = quickSettingsTrigger.querySelector('.wifi-indicator');
+const batteryLevelSpan = document.getElementById('batteryLevel');
+const clockSpan = quickSettingsTrigger.querySelector('.clock');
+const pinToggleButton = document.getElementById('pinToggleButton');
+
+const audioPanel = document.getElementById('audioPanel');
+const quickSettingsPanel = document.getElementById('quickSettingsPanel');
+const mediaVolumeSlider = document.getElementById('mediaVolume');
+const wifiToggleBtn = document.getElementById('wifiToggleBtn');
+
+
+let isTaskbarPinned = false;
+let isWifiOn = true;
+let taskbarHideTimeout = null;
+const HIDE_TIMEOUT_MS = 2000;
+let activePanel = null;
+
+
+function updateClock() {
+    const now = new Date();
+    const options = { hour: 'numeric', minute: 'numeric', hour12: false };
+    clockSpan.textContent = now.toLocaleTimeString('en-GB', options);
+}
+
+function updateWifiIndicator() {
+    wifiIndicator.textContent = isWifiOn ? '📶' : '✈️';
+    wifiToggleBtn.classList.toggle('active', isWifiOn);
+    wifiToggleBtn.setAttribute('aria-pressed', isWifiOn.toString());
+    wifiToggleBtn.querySelector('.icon').textContent = isWifiOn ? '📶' : '✈️';
+    wifiToggleBtn.querySelector('span:last-child').textContent = isWifiOn ? 'Wi-Fi' : 'Flight Mode';
+}
+
+function updatePinToggleIcon() {
+    pinToggleButton.textContent = isTaskbarPinned ? '▲' : '▼';
+    pinToggleButton.setAttribute('aria-label', isTaskbarPinned ? 'Unpin Taskbar' : 'Pin Taskbar');
+}
+
+function updateSpeakerIcon() {
+    const volume = parseInt(mediaVolumeSlider.value, 10);
+    speakerButton.textContent = volume === 0 ? '🔇' : '🔊';
+    speakerButton.setAttribute('aria-label', volume === 0 ? 'Audio Muted' : 'Audio Settings');
+}
+
+function updateSliderBackground(slider) {
+    const value = (slider.value - slider.min) / (slider.max - slider.min) * 100;
+    slider.style.setProperty('--value', `${value}%`);
+}
+
+function showTaskbar() {
+    clearTimeout(taskbarHideTimeout);
+    taskbar.classList.add('taskbar-visible');
+    taskbarHideTimeout = setTimeout(hideTaskbar, HIDE_TIMEOUT_MS);
+}
+
+function hideTaskbar() {
+    taskbar.classList.remove('taskbar-visible');
+    closeActivePanel();
+}
+
+function handlePinToggle() {
+    isTaskbarPinned = !isTaskbarPinned;
+    taskbar.classList.toggle('pinned', isTaskbarPinned);
+    updatePinToggleIcon();
+    log(`Taskbar ${isTaskbarPinned ? 'pinned' : 'unpinned'}`);
+    if (isTaskbarPinned) {
+         showTaskbar();
+    }
+}
+
+function handleWifiToggle() {
+    isWifiOn = !isWifiOn;
+    updateWifiIndicator();
+    log(`Toggled Wi-Fi state to: ${isWifiOn ? 'On' : 'Off (Flight Mode)'}`);
+}
+
+function openPanel(panelId) {
+    closeActivePanel();
+    const panel = document.getElementById(panelId);
+    if (panel) {
+        panel.classList.add('active');
+        activePanel = panelId;
+    }
+}
+
+function closeActivePanel() {
+    if (activePanel) {
+        const panel = document.getElementById(activePanel);
+        if (panel) {
+            panel.classList.remove('active');
+        }
+        activePanel = null;
+    }
+}
+
+
+elements.streamArea.addEventListener('mousemove', showTaskbar);
+elements.streamArea.addEventListener('mouseleave', () => {
+     clearTimeout(taskbarHideTimeout);
+     hideTaskbar();
+});
+elements.streamArea.addEventListener('touchstart', showTaskbar, { passive: true });
+
+
+pinToggleButton.addEventListener('click', handlePinToggle);
+backButton.addEventListener('click', () => log('Back button clicked'));
+homeButton.addEventListener('click', () => log('Home button clicked'));
+recentsButton.addEventListener('click', () => log('Recents button clicked'));
+
+
+speakerButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (activePanel === 'audioPanel') {
+        closeActivePanel();
+    } else {
+        openPanel('audioPanel');
+        // Request current volume when opening the panel
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            const message = {
+                action: 'getVolume'
+            };
+            try {
+                state.ws.send(JSON.stringify(message));
+                log('Requested current volume');
+            } catch (error) {
+                console.error(`Failed to request volume: ${error}`);
+                updateStatus(`Failed to get volume: ${error.message}`);
+            }
+        } else {
+            log('WebSocket not connected, cannot get volume');
+            updateStatus('Cannot get volume: Not connected');
+        }
+    }
+});
+
+quickSettingsTrigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (activePanel === 'quickSettingsPanel') {
+        closeActivePanel();
+    } else {
+        openPanel('quickSettingsPanel');
+    }
+});
+
+
+function sendVolumeUpdate(volumeValue) {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        const message = { action: 'volume', value: volumeValue };
+        try {
+            state.ws.send(JSON.stringify(message));
+            lastVolumeSendTime = Date.now();
+            pendingVolumeValue = null;
+        } catch (e) {
+            console.error(`Failed to send volume command: ${e}`);
+            updateStatus(`Failed to set volume: ${e.message}`);
+        }
+    } else {
+        log('WebSocket not connected, cannot set volume');
+        updateStatus('Cannot set volume: Not connected');
+    }
+}
+
+mediaVolumeSlider.addEventListener('input', () => {
+    const volumeValue = parseInt(mediaVolumeSlider.value, 10);
+    updateSliderBackground(mediaVolumeSlider);
+    updateSpeakerIcon();
+    pendingVolumeValue = volumeValue;
+
+    const now = Date.now();
+    if (now - lastVolumeSendTime > VOLUME_THROTTLE_MS) {
+        if (volumeChangeTimeout) clearTimeout(volumeChangeTimeout);
+        sendVolumeUpdate(volumeValue);
+    } else if (!volumeChangeTimeout) {
+        volumeChangeTimeout = setTimeout(() => {
+            if (pendingVolumeValue !== null) {
+                sendVolumeUpdate(pendingVolumeValue);
+            }
+            volumeChangeTimeout = null;
+        }, VOLUME_THROTTLE_MS - (now - lastVolumeSendTime));
+    }
+});
+
+const sendFinalVolume = () => {
+    if (volumeChangeTimeout) {
+        clearTimeout(volumeChangeTimeout);
+        volumeChangeTimeout = null;
+    }
+    const finalVolumeValue = parseInt(mediaVolumeSlider.value, 10);
+     if (pendingVolumeValue !== null && pendingVolumeValue !== finalVolumeValue) {
+         sendVolumeUpdate(finalVolumeValue);
+     } else if (pendingVolumeValue !== null) {
+         sendVolumeUpdate(finalVolumeValue);
+     }
+     pendingVolumeValue = null;
+};
+
+mediaVolumeSlider.addEventListener('mouseup', sendFinalVolume);
+mediaVolumeSlider.addEventListener('touchend', sendFinalVolume);
+
+wifiToggleBtn.addEventListener('click', handleWifiToggle);
+
+
+
+document.addEventListener('click', (e) => {
+    if (!audioPanel.contains(e.target) && e.target !== speakerButton &&
+        !quickSettingsPanel.contains(e.target) && e.target !== quickSettingsTrigger && !quickSettingsTrigger.contains(e.target))
+    {
+        closeActivePanel();
+    }
+});
+
+
+setInterval(updateClock, 5000);
+updateClock();
+updateWifiIndicator();
+updatePinToggleIcon();
+updateSpeakerIcon();
+updateSliderBackground(mediaVolumeSlider);
+
+
 updateStatus('Idle');
 elements.stopButton.disabled = true;
 elements.flipOrientationBtn.disabled = true;
