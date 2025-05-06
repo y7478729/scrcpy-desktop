@@ -810,7 +810,6 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         unidentifiedSockets: new Map(),
         audioMetadata: null,
         maxVolume: null,
-        androidVersion: null
         androidVersion: null,
 		currentWidth: 0,
         currentHeight: 0
