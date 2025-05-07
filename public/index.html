@@ -1,182 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Scrcpy Desktop</title>
-        <link rel="stylesheet" href="style.css">
-    </head>
-    <body data-theme="dark">
-        <header>
-            <h1>Scrcpy Desktop</h1>
-            <button id="themeToggle" class="theme-toggle-switch" role="switch" aria-label="Toggle theme" aria-checked="true">
-                <span class="theme-toggle-knob"></span>
-            </button>
-        </header>
-        <div id="streamArea">
-            <div id="videoPlaceholder">Waiting for stream...</div>
-            <video id="screen" autoplay disablePictureInPicture></video>
-            <div id="videoBorder"></div>
-
-            <div class="custom-taskbar">
-                 <div class="taskbar-main-content">
-                    <div class="taskbar-left">
-						<button class="nav-button app-drawer-button">
-							<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-							  <circle cx="6" cy="6" r="1.5"/>
-							  <circle cx="12" cy="6" r="1.5"/>
-							  <circle cx="18" cy="6" r="1.5"/>
-							  <circle cx="6" cy="12" r="1.5"/>
-							  <circle cx="12" cy="12" r="1.5"/>
-							  <circle cx="18" cy="12" r="1.5"/>
-							  <circle cx="6" cy="18" r="1.5"/>
-							  <circle cx="12" cy="18" r="1.5"/>
-							  <circle cx="18" cy="18" r="1.5"/>
-							</svg>
-                        </button>
-						<button class="nav-button recents-button">
-							<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							  <path d="M7 6v12m5-12v12m5-12v12"/>
-							</svg>
-                        </button>
-                        <button class="nav-button home-button">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="7" y="7" width="10" height="10" rx="2" ry="2"/>
-                            </svg>
-                        </button>
-						<button class="nav-button back-button">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="15 6 9 12 15 18"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="taskbar-right-main">
-                        <button id="speakerButton" class="icon-button" aria-label="Audio Settings">
-							<svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
-							  <path d="M5 9h4l4-4v14l-4-4H5zm10 0c1.5 1 1.5 5 0 6"/>
-							</svg>
-							<svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
-							  <path d="M5 9h4l4-4v14l-4-4H5zm11-1 4 8m0-8-4 8"/>
-							</svg>
-                        </button>
-                        <button id="quickSettingsTrigger" class="quick-settings-trigger" aria-label="Quick Settings">
-                            <span class="icon wifi-indicator">
-								<svg class="wifi-icon wifion" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-								  <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
-								  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
-								</svg>
-								<svg class="wifi-icon wifioff hidden" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-								  <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
-								  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
-								  <path stroke="red" d="m3 3 18 18"/>
-								</svg>
-                            </span>
-							<span class="icon battery-indicator">
-								<span id="batteryLevel">50</span>%
-								<svg class="battery-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								  <rect x="7" y="4" width="10" height="19" rx="2" ry="2"/>
-								  <rect class="battery-fill" x="9.5" y="6.5" width="5" height="14" rx=".25" ry=".25" fill="currentColor"/>
-								  <rect x="10.25" y="2" width="3.5" height="2" rx=".25" ry=".25"/>
-								</svg>
-							</span>
-                            <span class="clock">19:57</span>
-                        </button>
-                    </div>
-                </div>
-                 <div class="taskbar-pin-area">
-                    <button id="pinToggleButton" class="pin-toggle-button" aria-label="Pin Taskbar">▼</button>
-                 </div>
-            </div>
-
-            <div id="audioPanel" class="quick-panel">
-                <div class="panel-content">
-                    <div class="slider-group">
-                        <span class="icon">
-							<svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
-							  <path d="M5 9h4l4-4v14l-4-4H5zm10 0c1.5 1 1.5 5 0 6"/>
-							</svg>
-							<svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
-							  <path d="M5 9h4l4-4v14l-4-4H5zm11-1 4 8m0-8-4 8"/>
-							</svg>
-                        </span>
-                        <label for="mediaVolume">Media</label>
-                        <input type="range" id="mediaVolume" name="mediaVolume" min="0" max="100" value="75">
-                    </div>
-                </div>
-            </div>
-
-            <div id="quickSettingsPanel" class="quick-panel">
-                 <div class="panel-header">
-                     <span>Quick Settings</span>
-                 </div>
-                <div class="panel-grid">
-                     <button id="wifiToggleBtn" class="panel-toggle-button active" aria-pressed="true">
-                         <span class="icon">
-							<svg class="wifi-icon wifion" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-							  <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
-							  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
-							</svg>
-							<svg class="wifi-icon wifioff hidden" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-							  <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
-							  <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
-							  <path stroke="red" d="m3 3 18 18"/>
-							</svg>
-                         </span>
-                         <span>Wi-Fi</span>
-                     </button>
-                     <button class="panel-toggle-button" disabled>
-                         <span class="icon">🔆</span>
-                         <span>Brightness</span>
-                     </button>
-                     <button class="panel-toggle-button" disabled>
-                         <span class="icon">🔄</span>
-                         <span>Rotation</span>
-                     </button>
-                     <button class="panel-toggle-button" disabled>
-                         <span class="icon">✈️</span>
-                         <span>Flight Mode</span>
-                     </button>
-                     <button class="panel-toggle-button" disabled>
-                         <span class="icon">🔦</span>
-                         <span>Torch</span>
-                     </button>
-                     <button class="panel-toggle-button" disabled>
-                         <span class="icon">🌙</span>
-                         <span>Dark Mode</span>
-                     </button>
-                </div>
-            </div>
-
-            <div id="appDrawer" class="app-drawer">
-                <div class="app-drawer-content">
-                    <button class="drawer-nav-button prev-page">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="15 6 9 12 15 18"/>
-                        </svg>
-                    </button>
-                    <div class="app-grid-viewport">
-                        <div id="appGridContainer">
-                        </div>
-                    </div>
-                    <button class="drawer-nav-button next-page">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="9 6 15 12 9 18"/>
-                        </svg>
-                    </button>
-                </div>
-                <div class="drawer-pagination">
-                </div>
-            </div>
-        </div>
-        <main class="main-content">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scrcpy Desktop</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="dark">
+    <header>
+        <h1>Scrcpy Desktop</h1>
+        <button id="themeToggle" class="theme-toggle" role="switch" aria-label="Toggle theme" aria-checked="true">
+            <span class="theme-toggle-knob"></span>
+        </button>
+    </header>
+    <div class="app-container">
+        <aside class="sidebar">
             <div class="controls">
                 <div class="settings">
                     <div class="setting">
-                        <label for="maxSize">Max Size (px)</label>
+                        <label for="maxSize">Maximum Size (px)</label>
                         <input type="number" id="maxSize" value="0" min="0" step="10">
                     </div>
                     <div class="setting">
-                        <label for="maxFps">Max FPS</label>
+                        <label for="maxFps">Maximum FPS</label>
                         <input type="number" id="maxFps" value="60" min="0" max="120" step="1">
                     </div>
                     <div class="setting">
@@ -202,7 +48,159 @@
                 <button id="toggleLogBtn" aria-expanded="true">Hide Logs</button>
                 <div id="logContent" class="log-content"></div>
             </div>
+        </aside>
+        <main class="main-content">
+            <div id="streamArea">
+                <div id="videoPlaceholder">Waiting for stream...</div>
+                <video id="screen" autoplay disablePictureInPicture></video>
+                <div id="videoBorder"></div>
+                <div class="custom-taskbar">
+                    <div class="taskbar-main-content">
+                        <div class="taskbar-left">
+                            <button class="nav-button app-drawer-button">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                                    <circle cx="6" cy="6" r="1.5"/>
+                                    <circle cx="12" cy="6" r="1.5"/>
+                                    <circle cx="18" cy="6" r="1.5"/>
+                                    <circle cx="6" cy="12" r="1.5"/>
+                                    <circle cx="12" cy="12" r="1.5"/>
+                                    <circle cx="18" cy="12" r="1.5"/>
+                                    <circle cx="6" cy="18" r="1.5"/>
+                                    <circle cx="12" cy="18" r="1.5"/>
+                                    <circle cx="18" cy="18" r="1.5"/>
+                                </svg>
+                            </button>
+                            <button class="nav-button recents-button">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M7 6v12m5-12v12m5-12v12"/>
+                                </svg>
+                            </button>
+                            <button class="nav-button home-button">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="7" y="7" width="10" height="10" rx="2" ry="2"/>
+                                </svg>
+                            </button>
+                            <button class="nav-button back-button">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="15 6 9 12 15 18"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="taskbar-right-main">
+                            <button id="speakerButton" class="icon-button" aria-label="Audio Settings">
+                                <svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 9h4l4-4v14l-4-4H5zm10 0c1.5 1 1.5 5 0 6"/>
+                                </svg>
+                                <svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 9h4l4-4v14l-4-4H5zm11-1 4 8m0-8-4 8"/>
+                                </svg>
+                            </button>
+                            <button id="quickSettingsTrigger" class="quick-settings-trigger" aria-label="Quick Settings">
+                                <span class="icon wifi-indicator">
+                                    <svg class="wifi-icon wifion" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                        <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
+                                        <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+                                    </svg>
+                                    <svg class="wifi-icon wifioff hidden" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                        <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
+                                        <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+                                        <path stroke="red" d="m3 3 18 18"/>
+                                    </svg>
+                                </span>
+                                <span class="icon battery-indicator">
+                                    <span id="batteryLevel">50</span>%
+                                    <svg class="battery-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="7" y="4" width="10" height="19" rx="2" ry="2"/>
+                                        <rect class="battery-fill" x="9.5" y="6.5" width="5" height="14" rx=".25" ry=".25" fill="currentColor"/>
+                                        <rect x="10.25" y="2" width="3.5" height="2" rx=".25" ry=".25"/>
+                                    </svg>
+                                </span>
+                                <span class="clock">19:57</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="taskbar-pin-area">
+                        <button id="pinToggleButton" class="pin-toggle-button" aria-label="Pin Taskbar">▼</button>
+                    </div>
+                </div>
+                <div id="audioPanel" class="quick-panel">
+                    <div class="panel-content">
+                        <div class="slider-group">
+                            <span class="icon">
+                                <svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 9h4l4-4v14l-4-4H5zm10 0c1.5 1 1.5 5 0 6"/>
+                                </svg>
+                                <svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M5 9h4l4-4v14l-4-4H5zm11-1 4 8m0-8-4 8"/>
+                                </svg>
+                            </span>
+                            <label for="mediaVolume">Media</label>
+                            <input type="range" id="mediaVolume" name="mediaVolume" min="0" max="100" value="75">
+                        </div>
+                    </div>
+                </div>
+                <div id="quickSettingsPanel" class="quick-panel">
+                    <div class="panel-header">
+                        <span>Quick Settings</span>
+                    </div>
+                    <div class="panel-grid">
+                        <button id="wifiToggleBtn" class="panel-toggle-button active" aria-pressed="true">
+                            <span class="icon">
+                                <svg class="wifi-icon wifion" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                    <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
+                                    <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+                                </svg>
+                                <svg class="wifi-icon wifioff hidden" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                    <path d="M2 8c5.5-5.5 14.5-5.5 20 0M5.5 11.5C9 8 15 8 18.5 11.5M9 15c1.5-1.5 4.5-1.5 6 0"/>
+                                    <circle cx="12" cy="18" r="1" fill="currentColor" stroke="none"/>
+                                    <path stroke="red" d="m3 3 18 18"/>
+                                </svg>
+                            </span>
+                            <span>Wi-Fi</span>
+                        </button>
+                        <button class="panel-toggle-button" disabled>
+                            <span class="icon">🔆</span>
+                            <span>Brightness</span>
+                        </button>
+                        <button class="panel-toggle-button" disabled>
+                            <span class="icon">🔄</span>
+                            <span>Rotation</span>
+                        </button>
+                        <button class="panel-toggle-button" disabled>
+                            <span class="icon">✈️</span>
+                            <span>Flight Mode</span>
+                        </button>
+                        <button class="panel-toggle-button" disabled>
+                            <span class="icon">🔦</span>
+                            <span>Torch</span>
+                        </button>
+                        <button class="panel-toggle-button" disabled>
+                            <span class="icon">🌙</span>
+                            <span>Dark Mode</span>
+                        </button>
+                    </div>
+                </div>
+                <div id="appDrawer" class="app-drawer">
+                    <div class="app-drawer-content">
+                        <button class="drawer-nav-button prev-page">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="15 6 9 12 15 18"/>
+                            </svg>
+                        </button>
+                        <div class="app-grid-viewport">
+                            <div id="appGridContainer"></div>
+                        </div>
+                        <button class="drawer-nav-button next-page">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9 6 15 12 9 18"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="drawer-pagination"></div>
+                </div>
+            </div>
         </main>
-        <script src="/main.js"></script>
-    </body>
+    </div>
+    <script src="main.js"></script>
+</body>
 </html>

@@ -531,19 +531,76 @@ async function handleWifiToggleCommand(clientId, ws, message) {
         log(LogLevel.INFO, `[WifiToggle ${clientId}] Executing ADB command: ${command} on device ${session.deviceId}`);
         await device.shell(command);
 
-        await new Promise(resolve => setTimeout(resolve, 6000));
-
-        const statusStream = await device.shell('dumpsys wifi | grep "Wi-Fi is"');
-        const statusOutput = await streamToString(statusStream);
-        const isWifiOn = statusOutput.includes('Wi-Fi is enabled');
-        log(LogLevel.INFO, `[WifiToggle ${clientId}] Wi-Fi state after toggle: ${isWifiOn ? 'enabled' : 'disabled'}`);
-
+        let isWifiOn = false;
         let ssid = null;
-        if (isWifiOn) {
-		const ssidStream = await device.shell(`dumpsys wifi | grep 'Supplicant state: COMPLETED' | tail -n 1 | grep -Eo 'SSID: [^,]+' | sed 's/SSID: //' | sed 's/"//g' | head -n 1`);
-		const ssidOutput = await streamToString(ssidStream);
-		ssid = ssidOutput;
-        log(LogLevel.INFO, `[WifiToggle ${clientId}] SSID: ${ssid || 'Not connected'}`);
+
+        if (enableWifi) {
+            const maxAttemptsWifiOn = 10;
+            const maxAttemptsSsid = 15;
+            const pollInterval = 500;
+            let attempts = 0;
+
+            while (attempts < maxAttemptsWifiOn) {
+                const statusStream = await device.shell('dumpsys wifi | grep "Wi-Fi is"');
+                const statusOutput = await streamToString(statusStream);
+                isWifiOn = statusOutput.includes('Wi-Fi is enabled');
+
+                if (isWifiOn) {
+                    log(LogLevel.INFO, `[WifiToggle ${clientId}] Wi-Fi is enabled`);
+                    break;
+                }
+
+                attempts++;
+                if (attempts < maxAttemptsWifiOn) {
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                }
+            }
+
+            if (!isWifiOn) {
+                log(LogLevel.WARN, `[WifiToggle ${clientId}] Wi-Fi failed to enable within timeout`);
+                ws.send(JSON.stringify({
+                    type: 'wifiResponse',
+                    success: false,
+                    error: 'Wi-Fi failed to enable within timeout'
+                }));
+                return;
+            }
+
+            attempts = 0;
+            while (attempts < maxAttemptsSsid) {
+                const ssidStream = await device.shell(
+                    `dumpsys wifi | grep 'Supplicant state: COMPLETED' | tail -n 1 | grep -Eo 'SSID: [^,]+' | sed 's/SSID: //' | sed 's/"//g' | head -n 1`
+                );
+                const ssidOutput = await streamToString(ssidStream);
+                ssid = ssidOutput.trim();
+
+                if (ssid && ssid !== '' && ssid !== '<unknown ssid>') {
+                    log(LogLevel.INFO, `[WifiToggle ${clientId}] Wi-Fi enabled and connected to SSID: ${ssid}`);
+                    break;
+                }
+
+                attempts++;
+                if (attempts < maxAttemptsSsid) {
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                }
+            }
+
+            if (!ssid || ssid === '' || ssid === '<unknown ssid>') {
+                log(LogLevel.WARN, `[WifiToggle ${clientId}] Failed to connect to a valid SSID within timeout`);
+                ws.send(JSON.stringify({
+                    type: 'wifiResponse',
+                    success: false,
+                    error: 'Failed to connect to a valid SSID within timeout'
+                }));
+                return;
+            }
+        } else {
+			await new Promise(resolve => setTimeout(resolve, 250));
+
+            const statusStream = await device.shell('dumpsys wifi | grep "Wi-Fi is"');
+            const statusOutput = await streamToString(statusStream);
+            isWifiOn = statusOutput.includes('Wi-Fi is enabled');
+            log(LogLevel.INFO, `[WifiToggle ${clientId}] Wi-Fi state after toggle: ${isWifiOn ? 'enabled' : 'disabled'}`);
         }
 
         ws.send(JSON.stringify({
@@ -792,6 +849,35 @@ async function handleLaunchApp(clientId, ws, message) {
     }
 }
 
+async function executeCommand(command, description) {
+    log(LogLevel.DEBUG, `[Exec] Running: ${description} (${command})`);
+    try {
+        const {
+            stdout,
+            stderr
+        } = await execPromise(command);
+        if (stderr && !(description.includes('Remove') && stderr.includes('not found'))) {
+            log(LogLevel.WARN, `[Exec] Stderr (${description}): ${stderr.trim()}`);
+        } else if (stderr) {
+            log(LogLevel.DEBUG, `[Exec] Stderr (${description}): ${stderr.trim()} (Ignored)`);
+        }
+        if (stdout) {
+            log(LogLevel.DEBUG, `[Exec] Stdout (${description}): ${stdout.trim()}`);
+        }
+        log(LogLevel.DEBUG, `[Exec] Success: ${description}`);
+        return {
+            success: true,
+            stdout,
+            stderr
+        };
+    } catch (error) {
+        log(LogLevel.ERROR, `[Exec] Error (${description}): ${error.message}`);
+        if (error.stderr) log(LogLevel.ERROR, `[Exec] Stderr: ${error.stderr.trim()}`);
+        if (error.stdout) log(LogLevel.ERROR, `[Exec] Stdout: ${error.stdout.trim()}`);
+        throw new Error(`Failed to execute: ${description} - ${error.message}`);
+    }
+}
+
 async function handleStart(clientId, ws, message) {
     log(LogLevel.INFO, `[HandleStart ${clientId}] Processing start request:`, message);
     const client = wsClients.get(clientId);
@@ -886,16 +972,16 @@ async function handleStart(clientId, ws, message) {
 }
 
 async function checkReverseTunnelExists(deviceId, tunnelString) {
-    log(LogLevel.DEBUG, `[CheckTunnel] Checking reverse tunnel: ${tunnelString} for device ${deviceId}`);
+    log(LogLevel.DEBUG, `[Exec] Checking reverse tunnel: ${tunnelString} for device ${deviceId}`);
     try {
-        const device = adb.getDevice(deviceId);
-        const reverseListStream = await device.shell('reverse --list');
-        const reverseListOutput = await streamToString(reverseListStream);
-        const exists = reverseListOutput.includes(tunnelString);
-        log(LogLevel.DEBUG, `[CheckTunnel] Reverse tunnel ${tunnelString} ${exists ? 'exists' : 'does not exist'}`);
+        const {
+            stdout
+        } = await executeCommand(`adb -s ${deviceId} reverse --list`, `List reverse tunnels (Device: ${deviceId})`);
+        const exists = stdout.includes(tunnelString);
+        log(LogLevel.DEBUG, `[Exec] Reverse tunnel ${tunnelString} ${exists ? 'exists' : 'does not exist'}`);
         return exists;
     } catch (error) {
-        log(LogLevel.DEBUG, `[CheckTunnel] Error checking reverse tunnel list: ${error.message}. Assuming tunnel does not exist.`);
+        log(LogLevel.DEBUG, `[Exec] Error checking reverse tunnel list: ${error.message}. Assuming tunnel does not exist.`);
         return false;
     }
 }
@@ -941,20 +1027,21 @@ async function setupScrcpySession(deviceId, scid, port, runOptions, clientId) {
         await device.push(SERVER_JAR_PATH, SERVER_DEVICE_PATH);
         log(LogLevel.INFO, `[Session ${scid}] Pushed scrcpy-server.jar to device ${deviceId}`);
 
+        await executeCommand(`adb -s ${deviceId} push "${SERVER_JAR_PATH}" "${SERVER_DEVICE_PATH}"`, `Push server JAR (SCID: ${scid})`);
         const tunnelString = `localabstract:scrcpy_${scid}`;
-        const reverseListStream = await device.shell('reverse --list');
-        const reverseListOutput = await streamToString(reverseListStream);
-        if (reverseListOutput.includes(tunnelString)) {
-            await device.shell(`reverse --remove ${tunnelString}`);
-            log(LogLevel.DEBUG, `[Session ${scid}] Removed existing reverse tunnel ${tunnelString}`);
-        }
-        await device.shell('reverse --remove-all');
-        log(LogLevel.DEBUG, `[Session ${scid}] Removed all existing reverse tunnels`);
-        await device.reverse(tunnelString, `tcp:${port}`);
-        session.tunnelActive = true;
-        log(LogLevel.INFO, `[Session ${scid}] Reverse tunnel active for ${tunnelString} on port ${port}`);
 
-        session.tcpServer = createTcpServer(scid);
+        if (await checkReverseTunnelExists(deviceId, tunnelString)) {
+            await executeCommand(`adb -s ${deviceId} reverse --remove ${tunnelString}`, `Remove specific tunnel (SCID: ${scid})`);
+        } else {
+            log(LogLevel.DEBUG, `[Session ${scid}] No reverse tunnel ${tunnelString} found, skipping removal.`);
+        }
+        await executeCommand(`adb -s ${deviceId} reverse --remove-all`, `Remove all tunnels (SCID: ${scid})`).catch(() => {});
+        await executeCommand(`adb -s ${deviceId} reverse ${tunnelString} tcp:${port}`, `Setup reverse tunnel (SCID: ${scid})`);
+        session.tunnelActive = true;
+       
+	    log(LogLevel.INFO, `[Session ${scid}] Reverse tunnel active.`);
+        
+		session.tcpServer = createTcpServer(scid);
         await new Promise((resolve, reject) => {
             session.tcpServer.listen(port, '127.0.0.1', () => {
                 log(LogLevel.INFO, `[Session ${scid}] TCP server listening.`);
@@ -1244,12 +1331,11 @@ async function checkAndSendStreamingStarted(session, client) {
         if (session.tunnelActive && session.deviceId) {
             const tunnelString = `localabstract:scrcpy_${session.scid}`;
             try {
-                const device = adb.getDevice(session.deviceId);
-                const reverseListStream = await device.shell('reverse --list');
-                const reverseListOutput = await streamToString(reverseListStream);
-                if (reverseListOutput.includes(tunnelString)) {
-                    await device.shell(`reverse --remove ${tunnelString}`);
-                    log(LogLevel.INFO, `[Session ${session.scid}] Removed reverse tunnel ${tunnelString}`);
+                if (await checkReverseTunnelExists(session.deviceId, tunnelString)) {
+                    await executeCommand(
+                        `adb -s ${session.deviceId} reverse --remove ${tunnelString}`,
+                        `Remove reverse tunnel after sockets opened (SCID: ${session.scid})`
+                    );
                 } else {
                     log(LogLevel.DEBUG, `[Session ${session.scid}] Reverse tunnel ${tunnelString} already removed or not found.`);
                 }
