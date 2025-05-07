@@ -4,8 +4,8 @@ const { setLogger } = require('h264-converter');
 setLogger(() => {}, (message) => appendLog(message, true));
 
 const CHECK_STATE_INTERVAL_MS = 500;
-const MAX_SEEK_WAIT_MS = 2000;
-const MAX_TIME_TO_RECOVER = 300;
+const MAX_SEEK_WAIT_MS = 1000;
+const MAX_TIME_TO_RECOVER = 200;
 const IS_SAFARI = !!window.safari;
 const IS_CHROME = navigator.userAgent.includes('Chrome');
 const IS_MAC = navigator.platform.startsWith('Mac');
@@ -380,48 +380,58 @@ const setupAudioPlayer = (codecId, metadata) => {
 		}
 
         state.audioDecoder = new AudioDecoder({
-            output: (audioData) => {
-                try {
-                    const numberOfChannels = audioData.numberOfChannels;
-                    const sampleRate = audioData.sampleRate;
-                    const bufferLength = audioData.numberOfFrames;
-                    const buffer = state.audioContext.createBuffer(
-                        numberOfChannels,
-                        bufferLength,
-                        sampleRate
-                    );
+		output: (audioData) => {
+			try {
+				const numberOfChannels = audioData.numberOfChannels;
+				const sampleRate = audioData.sampleRate;
+				const bufferLength = audioData.numberOfFrames;
+				const buffer = state.audioContext.createBuffer(
+					numberOfChannels,
+					bufferLength,
+					sampleRate
+				);
 
-                    const isInterleaved = audioData.format === 'f32' || audioData.format === 'f32-interleaved';
-                    if (isInterleaved) {
-                        const interleavedData = new Float32Array(audioData.numberOfFrames * numberOfChannels);
-                        audioData.copyTo(interleavedData, { planeIndex: 0 });
-
-                        for (let channel = 0; channel < numberOfChannels; channel++) {
-                            const channelData = buffer.getChannelData(channel);
-                            for (let i = 0; i < audioData.numberOfFrames; i++) {
-                                channelData[i] = interleavedData[i * numberOfChannels + channel];
-                            }
-                        }
-                    } else {
-                        for (let channel = 0; channel < numberOfChannels; channel++) {
-                            audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
-                        }
-                    }
-
-                    const source = state.audioContext.createBufferSource();
-                    source.buffer = buffer;
-                    source.connect(state.audioContext.destination);
-                    const currentTime = state.audioContext.currentTime;
-                    const bufferDuration = audioData.numberOfFrames / sampleRate;
-					if (state.nextAudioTime < currentTime) {
-						appendLog(`Audio scheduling behind by ${(currentTime - state.nextAudioTime).toFixed(3)}s`);
-						state.nextAudioTime = currentTime;
+				// Copy audio data to buffer
+				const isInterleaved = audioData.format === 'f32' || audioData.format === 'f32-interleaved';
+				if (isInterleaved) {
+					const interleavedData = new Float32Array(audioData.numberOfFrames * numberOfChannels);
+					audioData.copyTo(interleavedData, { planeIndex: 0 });
+					for (let channel = 0; channel < numberOfChannels; channel++) {
+						const channelData = buffer.getChannelData(channel);
+						for (let i = 0; i < audioData.numberOfFrames; i++) {
+							channelData[i] = interleavedData[i * numberOfChannels + channel];
+						}
 					}
-                    source.start(state.nextAudioTime);
-                    state.nextAudioTime += bufferDuration;
-                } catch (e) {
-                    console.error(`Error processing decoded audio: ${e}`);
-                }
+				} else {
+					for (let channel = 0; channel < numberOfChannels; channel++) {
+						audioData.copyTo(buffer.getChannelData(channel), { planeIndex: channel });
+					}
+				}
+
+				const source = state.audioContext.createBufferSource();
+				source.buffer = buffer;
+				source.connect(state.audioContext.destination);
+				const currentTime = state.audioContext.currentTime;
+				const bufferDuration = audioData.numberOfFrames / sampleRate;
+
+				// Synchronize with video
+				const videoTime = elements.videoElement.currentTime;
+				if (!state.receivedFirstAudioPacket) {
+					state.nextAudioTime = Math.max(currentTime, videoTime);
+					state.receivedFirstAudioPacket = true;
+				}
+
+				if (state.nextAudioTime < currentTime) {
+					appendLog(`Audio scheduling behind by ${(currentTime - state.nextAudioTime).toFixed(3)}s`);
+					state.nextAudioTime = currentTime;
+				}
+
+				source.start(state.nextAudioTime);
+				state.nextAudioTime += bufferDuration;
+			} catch (e) {
+				console.error(`Error processing decoded audio: ${e}`);
+			}
+		
             },
             error: (error) => {
                 console.error(`AudioDecoder error: ${error}`);
