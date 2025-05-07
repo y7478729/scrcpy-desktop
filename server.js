@@ -234,7 +234,10 @@ function createWebSocketServer() {
 							break;	
 						case 'getBatteryLevel':
 							await handleGetBatteryLevelCommand(clientId, ws, message);
-							break;							
+							break;
+						case 'launchApp':
+                            await handleLaunchApp(clientId, ws, message);
+                            break;							
                         default:
                             log(LogLevel.WARN, `[WebSocket] Unknown action from ${clientId}: ${message.action}`);
                             ws.send(JSON.stringify({
@@ -537,11 +540,10 @@ async function handleWifiToggleCommand(clientId, ws, message) {
 
         let ssid = null;
         if (isWifiOn) {
-            const ssidStream = await device.shell('dumpsys netstats | grep -E \'iface=wlan.*networkId\'');
-            const ssidOutput = await streamToString(ssidStream);
-            const match = ssidOutput.match(/networkId="([^"]+)"/);
-            ssid = match ? match[1] : null;
-            log(LogLevel.INFO, `[WifiToggle ${clientId}] SSID: ${ssid || 'Not connected'}`);
+		const ssidStream = await device.shell(`dumpsys wifi | grep 'Supplicant state: COMPLETED' | tail -n 1 | grep -Eo 'SSID: [^,]+' | sed 's/SSID: //' | sed 's/"//g' | head -n 1`);
+		const ssidOutput = await streamToString(ssidStream);
+		ssid = ssidOutput;
+        log(LogLevel.INFO, `[WifiToggle ${clientId}] SSID: ${ssid || 'Not connected'}`);
         }
 
         ws.send(JSON.stringify({
@@ -593,11 +595,10 @@ async function handleGetWifiStatusCommand(clientId, ws, message) {
 
         let ssid = null;
         if (isWifiOn) {
-            const ssidStream = await device.shell('dumpsys netstats | grep -E \'iface=wlan.*networkId\'');
-            const ssidOutput = await streamToString(ssidStream);
-            const match = ssidOutput.match(/networkId="([^"]+)"/);
-            ssid = match ? match[1] : null;
-            log(LogLevel.INFO, `[GetWifiStatus ${clientId}] SSID: ${ssid || 'Not connected'}`);
+		const ssidStream = await device.shell(`dumpsys wifi | grep 'Supplicant state: COMPLETED' | tail -n 1 | grep -Eo 'SSID: [^,]+' | sed 's/SSID: //' | sed 's/"//g' | head -n 1`);
+		const ssidOutput = await streamToString(ssidStream);
+		ssid = ssidOutput;
+        log(LogLevel.INFO, `[GetWifiStatus ${clientId}] SSID: ${ssid || 'Not connected'}`);
         }
 
         ws.send(JSON.stringify({
@@ -691,6 +692,105 @@ function streamToString(stream) {
         stream.on('error', (err) => reject(err));
     });
 }
+async function getLauncherApps(deviceId) {
+    log(LogLevel.INFO, `[LauncherApps] Querying launcher activities for device ${deviceId}`);
+
+    try {
+        const device = adb.getDevice(deviceId);
+        const command = 'cmd package query-activities -a android.intent.action.MAIN -c android.intent.category.LAUNCHER';
+        const outputStream = await device.shell(command);
+        const rawOutput = await streamToString(outputStream);
+
+        const apps = [];
+        const activityBlocks = rawOutput.split('Activity #').slice(1);
+
+        const genericSuffixes = [
+            'android', 'app', 'mobile', 'client', 'lite', 'pro', 'free', 'plus',
+            'core', 'base', 'main', 'ui', 'launcher', 'system', 'service'
+        ];
+
+        for (const block of activityBlocks) {
+            let packageName = 'N/A';
+            let label = 'Unknown App';
+
+            const packageNameMatch = block.match(/packageName=([^\s]+)/);
+            if (packageNameMatch) {
+                packageName = packageNameMatch[1];
+            }
+            const appNonLocalizedLabelMatch = block.match(/ApplicationInfo:\s*[^]*?nonLocalizedLabel=([^\s]+)/is);
+            if (appNonLocalizedLabelMatch && appNonLocalizedLabelMatch[1] !== 'null') {
+                label = appNonLocalizedLabelMatch[1];
+            } else {
+                const activityNonLocalizedLabelMatch = block.match(/ActivityInfo:\s*[^]*?nonLocalizedLabel=([^\s]+)/is);
+                if (activityNonLocalizedLabelMatch && activityNonLocalizedLabelMatch[1] !== 'null') {
+                    label = activityNonLocalizedLabelMatch[1];
+                } else {
+
+                    if (label === 'Unknown App' && packageName !== 'N/A') {
+                        let parts = packageName.split('.');
+                        let derivedLabel = parts[parts.length - 1];
+
+                        if (genericSuffixes.includes(derivedLabel.toLowerCase()) && parts.length > 1) {
+                            derivedLabel = parts[parts.length - 2];
+                        }
+
+                        derivedLabel = derivedLabel
+                            .replace(/([A-Z])/g, ' $1')
+                            .replace(/[-_.]/g, ' ')
+                            .trim()
+                            .replace(/\b\w/g, c => c.toUpperCase());
+
+                        label = derivedLabel;
+                    }
+                }
+            }
+            if (packageName !== 'N/A' && label !== 'Unknown App') {
+                const firstLetter = label.charAt(0).toUpperCase();
+                apps.push({
+                    packageName: packageName,
+                    label: label,
+                    letter: firstLetter
+                });
+            }
+        }
+
+        log(LogLevel.INFO, `[LauncherApps] Found ${apps.length} launcher apps.`);
+        apps.sort((a, b) => a.label.localeCompare(b.label));
+
+        return apps;
+
+    } catch (error) {
+        log(LogLevel.ERROR, `[LauncherApps] Failed to get launcher apps: ${error.message}`);
+        throw new Error(`Failed to get launcher apps: ${error.message}`);
+    }
+}
+
+async function handleLaunchApp(clientId, ws, message) {
+    const client = wsClients.get(clientId);
+    if (!client?.session) {
+        ws.send(JSON.stringify({ type: 'launchAppResponse', success: false, packageName: message.packageName, error: 'No active session' }));
+        return;
+    }
+    const session = sessions.get(client.session);
+    if (!session?.deviceId) {
+        ws.send(JSON.stringify({ type: 'launchAppResponse', success: false, packageName: message.packageName, error: 'No device found' }));
+        return;
+    }
+    const packageName = message.packageName;
+    if (!packageName) {
+        ws.send(JSON.stringify({ type: 'launchAppResponse', success: false, error: 'Package name missing' }));
+        return;
+    }
+    try {
+        const device = adb.getDevice(session.deviceId);
+        await device.shell(`monkey -p ${packageName} -c android.intent.category.LAUNCHER 1`);
+        log(LogLevel.INFO, `[LaunchApp ${clientId}] Launched ${packageName}`);
+        ws.send(JSON.stringify({ type: 'launchAppResponse', success: true, packageName: packageName }));
+    } catch (error) {
+        log(LogLevel.ERROR, `[LaunchApp ${clientId}] Failed to launch ${packageName}: ${error.message}`);
+        ws.send(JSON.stringify({ type: 'launchAppResponse', success: false, packageName: packageName, error: error.message }));
+    }
+}
 
 async function handleStart(clientId, ws, message) {
     log(LogLevel.INFO, `[HandleStart ${clientId}] Processing start request:`, message);
@@ -712,6 +812,17 @@ async function handleStart(clientId, ws, message) {
         deviceId = devices[0].id;
         log(LogLevel.INFO, `[HandleStart ${clientId}] Using device: ${deviceId}`);
 
+        try {
+            const launcherApps = await getLauncherApps(deviceId);
+            ws.send(JSON.stringify({
+                type: 'launcherAppsList',
+                apps: launcherApps
+            }));
+            log(LogLevel.INFO, `[HandleStart ${clientId}] Sent launcher app list to client.`);
+        } catch (appError) {
+            log(LogLevel.ERROR, `[HandleStart ${clientId}] Failed to get/send launcher apps: ${appError.message}`);
+        }
+		
         let androidVersion;
         const device = adb.getDevice(deviceId);
         const versionStream = await device.shell('getprop ro.build.version.release');

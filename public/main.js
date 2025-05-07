@@ -3418,7 +3418,10 @@ const VOLUME_THROTTLE_MS = 150;
 let lastVolumeSendTime = 0;
 let pendingVolumeValue = null;
 
+const APPS_PER_PAGE = 9;
+ 
 const elements = {
+    header: document.querySelector('header'),
     startButton: document.getElementById('startBtn'),
     stopButton: document.getElementById('stopBtn'),
     bitrateSelect: document.getElementById('bitrate'),
@@ -3435,6 +3438,14 @@ const elements = {
 	logArea: document.getElementById('logArea'),
     logContent: document.getElementById('logContent'),
     toggleLogBtn: document.getElementById('toggleLogBtn'),
+    appDrawer: document.getElementById('appDrawer'),
+    appDrawerContent: document.querySelector('.app-drawer-content'),
+    appDrawerButton: document.querySelector('.app-drawer-button'),
+    appGridContainer: document.getElementById('appGridContainer'),
+    prevPageButton: document.querySelector('.drawer-nav-button.prev-page'),
+    nextPageButton: document.querySelector('.drawer-nav-button.next-page'),
+    paginationContainer: document.querySelector('.drawer-pagination'),
+    paginationDots: [],
 };
 
 let state = {
@@ -3470,6 +3481,12 @@ let state = {
     totalAudioFrames: 0,
 	isWifiOn: true,
 	wifiSsid: null,
+    allApps: [],
+    appsPerPage: APPS_PER_PAGE,
+    totalPages: 0,
+    currentPage: 1,
+    headerScrollTimeout: null,
+    isHeaderMouseOver: false,
 };
 
 
@@ -3548,8 +3565,8 @@ const checkForIFrameAndCleanBuffer = (frameData) => {
 
     if (!elements.videoElement.buffered || !elements.videoElement.buffered.length) return;
     const buffered = elements.videoElement.buffered.end(0) - elements.videoElement.currentTime;
-    const MAX_BUFFER = IS_SAFARI ? 2 : (IS_CHROME && IS_MAC ? 1.2 : 0.5);
-    if (buffered < MAX_BUFFER * 1.5) return;
+    const MAX_BUFFER_CLEAN = IS_SAFARI ? 2 : (IS_CHROME && IS_MAC ? 1.2 : 0.5);
+    if (buffered < MAX_BUFFER_CLEAN * 1.5) return;
 
     if (!state.sourceBufferInternal) {
         state.sourceBufferInternal = state.converter?.sourceBuffer || null;
@@ -3622,7 +3639,6 @@ const calculateMomentumStats = () => {
     if (!stat) return;
 
     const timestamp = Date.now();
-    const oneSecondBefore = timestamp - 1000;
 
     state.videoStats.push(stat);
     state.inputBytes.push({ timestamp, bytes: state.inputBytes.length > 0 ? state.inputBytes[state.inputBytes.length - 1].bytes : 0 });
@@ -3631,7 +3647,7 @@ const calculateMomentumStats = () => {
         state.inputBytes.shift();
     }
 
-    const inputBytes = state.inputBytes.reduce((sum, item) => sum + item.bytes, 0);
+    const inputBytesSum = state.inputBytes.reduce((sum, item) => sum + item.bytes, 0);
     const inputFrames = state.inputBytes.length;
 
     if (state.videoStats.length > 1) {
@@ -3641,7 +3657,7 @@ const calculateMomentumStats = () => {
         state.momentumQualityStats = {
             decodedFrames,
             droppedFrames,
-            inputBytes,
+            inputBytes: inputBytesSum,
             inputFrames,
             timestamp,
         };
@@ -3658,10 +3674,9 @@ const checkForBadState = () => {
     if (elements.videoElement.buffered.length) {
         const end = elements.videoElement.buffered.end(0);
         const buffered = end - currentTime;
+        const MAX_BUFFER_CHECK = IS_SAFARI ? 2 : (IS_CHROME && IS_MAC ? 1.2 : 0.5);
 
-        const MAX_BUFFER = IS_SAFARI ? 2 : (IS_CHROME && IS_MAC ? 1.2 : 0.5);
-
-        if (buffered > MAX_BUFFER || buffered < MAX_AHEAD) {
+        if (buffered > MAX_BUFFER_CHECK || buffered < MAX_AHEAD) {
             calculateMomentumStats();
         }
     }
@@ -3678,7 +3693,7 @@ const checkForBadState = () => {
 
     if (currentTime === state.lastVideoTime && state.currentTimeNotChangedSince === -1) {
         state.currentTimeNotChangedSince = now;
-    } else {
+    } else if (currentTime !== state.lastVideoTime) {
         state.currentTimeNotChangedSince = -1;
     }
     state.lastVideoTime = currentTime;
@@ -3686,9 +3701,9 @@ const checkForBadState = () => {
     if (elements.videoElement.buffered.length) {
         const end = elements.videoElement.buffered.end(0);
         const buffered = end - currentTime;
-        const MAX_BUFFER = IS_SAFARI ? 2 : (IS_CHROME && IS_MAC ? 1.2 : 0.5);
+        const MAX_BUFFER_JUMP = IS_SAFARI ? 2 : (IS_CHROME && IS_MAC ? 1.2 : 0.5);
 
-        if (buffered > MAX_BUFFER) {
+        if (buffered > MAX_BUFFER_JUMP) {
             if (state.bigBufferSince === -1) {
                 state.bigBufferSince = now;
             } else if (now - state.bigBufferSince > MAX_TIME_TO_RECOVER) {
@@ -3785,7 +3800,7 @@ const setupAudioPlayer = (codecId, metadata) => {
                     const currentTime = state.audioContext.currentTime;
                     const bufferDuration = audioData.numberOfFrames / sampleRate;
 					if (state.nextAudioTime < currentTime) {
-						appendLog(`Audio scheduling behind by ${currentTime - state.nextAudioTime}s`);
+						appendLog(`Audio scheduling behind by ${(currentTime - state.nextAudioTime).toFixed(3)}s`);
 						state.nextAudioTime = currentTime;
 					}
                     source.start(state.nextAudioTime);
@@ -4163,6 +4178,16 @@ const startStreaming = () => {
 							updateStatus(`Failed to get battery level: ${message.error}`);
 							appendLog(`Failed to get battery level: ${message.error}`);
 						}
+						break;
+					case 'launcherAppsList':
+						const apps = message.apps;
+						if (Array.isArray(apps)) {
+							appendLog('Received launcher apps list.');
+							renderAppDrawer(apps);
+						} else {
+							appendLog('Received unexpected format for launcher apps list.');
+							renderAppDrawer([]);
+						}
 						break;						
                     default:
                         appendLog(`Unknown message type: ${message.type}`);
@@ -4194,7 +4219,7 @@ const startStreaming = () => {
     };
 
     state.ws.onerror = (error) => {
-        appendLog(`WebSocket error: ${error}`);
+        appendLog(`WebSocket error: ${error.message || 'Unknown WebSocket error'}`);
         updateStatus('WebSocket error');
         stopStreaming(false);
     };
@@ -4224,11 +4249,11 @@ const stopStreaming = (sendDisconnect = true) => {
     }
 
     if (state.audioDecoder) {
-        state.audioDecoder.close();
+        if (state.audioDecoder.state !== 'closed') state.audioDecoder.close();
         state.audioDecoder = null;
     }
     if (state.audioContext) {
-        state.audioContext.close();
+        if (state.audioContext.state !== 'closed') state.audioContext.close();
         state.audioContext = null;
     }
     state.audioMetadata = null;
@@ -4260,7 +4285,7 @@ const stopStreaming = (sendDisconnect = true) => {
     elements.videoBorder.style.display = 'none';
     elements.streamArea.style.aspectRatio = '9 / 16';
 
-    if (!sendDisconnect) {
+    if (!sendDisconnect || state.isRunning) {
         state.isRunning = false;
         updateStatus('Disconnected');
         elements.startButton.disabled = false;
@@ -4286,22 +4311,13 @@ elements.stopButton.addEventListener('click', () => stopStreaming(true));
 
 elements.themeToggle.addEventListener('click', () => {
     const body = document.body;
-    const newTheme = body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    const currentTheme = body.getAttribute('data-theme');
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
     body.setAttribute('data-theme', newTheme);
+    elements.themeToggle.setAttribute('aria-checked', newTheme === 'dark' ? 'true' : 'false');
     appendLog(`Theme switched to ${newTheme}`);
 });
 
-let themeToggleTimeout;
-const showThemeToggle = () => {
-    elements.themeToggle.classList.remove('hidden');
-    clearTimeout(themeToggleTimeout);
-    themeToggleTimeout = setTimeout(() => elements.themeToggle.classList.add('hidden'), 3000);
-};
-
-['mousemove', 'scroll', 'touchstart'].forEach(event =>
-    document.addEventListener(event, showThemeToggle)
-);
-showThemeToggle();
 
 elements.fullscreenBtn.addEventListener('click', () => {
     if (!document.fullscreenElement) {
@@ -4338,14 +4354,11 @@ elements.videoElement.addEventListener('contextmenu', (e) => {
 });
 
 const taskbar = document.querySelector('.custom-taskbar');
-const taskbarMainContent = taskbar.querySelector('.taskbar-main-content');
-const taskbarPinArea = taskbar.querySelector('.taskbar-pin-area');
 const backButton = taskbar.querySelector('.back-button');
 const homeButton = taskbar.querySelector('.home-button');
 const recentsButton = taskbar.querySelector('.recents-button');
 const speakerButton = document.getElementById('speakerButton');
 const quickSettingsTrigger = document.getElementById('quickSettingsTrigger');
-const wifiIndicator = quickSettingsTrigger.querySelector('.wifi-indicator');
 const batteryLevelSpan = document.getElementById('batteryLevel');
 const clockSpan = quickSettingsTrigger.querySelector('.clock');
 const pinToggleButton = document.getElementById('pinToggleButton');
@@ -4353,12 +4366,11 @@ const pinToggleButton = document.getElementById('pinToggleButton');
 const audioPanel = document.getElementById('audioPanel');
 const quickSettingsPanel = document.getElementById('quickSettingsPanel');
 const mediaVolumeSlider = document.getElementById('mediaVolume');
-const wifiToggleBtn = document.getElementById('wifiToggleBtn');
 
 
 let isTaskbarPinned = false;
 let taskbarHideTimeout = null;
-const HIDE_TIMEOUT_MS = 2000;
+const HIDE_TASKBAR_TIMEOUT_MS = 2000;
 let activePanel = null;
 
 
@@ -4436,12 +4448,16 @@ function updateSliderBackground(slider) {
 function showTaskbar() {
     clearTimeout(taskbarHideTimeout);
     taskbar.classList.add('taskbar-visible');
-    taskbarHideTimeout = setTimeout(hideTaskbar, HIDE_TIMEOUT_MS);
+    if (!activePanel) {
+        taskbarHideTimeout = setTimeout(hideTaskbar, HIDE_TASKBAR_TIMEOUT_MS);
+    }
 }
 
 function hideTaskbar() {
+    if (activePanel) {
+        return;
+    }
     taskbar.classList.remove('taskbar-visible');
-    closeActivePanel();
 }
 
 let lastPinToggleClickTime = 0;
@@ -4466,7 +4482,9 @@ function handlePinToggle(isDoubleClick = false) {
         updatePinToggleIcon();
         appendLog(`Taskbar ${isTaskbarPinned ? 'pinned' : 'unpinned'}`);
         if (isTaskbarPinned) {
-            showTaskbar();
+            showTaskbar(); 
+        } else {
+            showTaskbar(); 
         }
     }
 }
@@ -4495,36 +4513,219 @@ function handleWifiToggle() {
     }
 }
 
+function renderAppDrawer(apps) {
+    elements.appGridContainer.innerHTML = '';
+    elements.paginationContainer.innerHTML = '';
+    elements.paginationDots = [];
+    state.allApps = apps || [];
+    state.totalPages = Math.ceil(state.allApps.length / state.appsPerPage);
+
+    if (state.allApps.length === 0) {
+        const noAppsMessage = document.createElement('div');
+        noAppsMessage.textContent = 'No applications found.';
+        noAppsMessage.style.textAlign = 'center';
+        noAppsMessage.style.width = '100%';
+        noAppsMessage.style.padding = '20px';
+        elements.appGridContainer.appendChild(noAppsMessage);
+    } else {
+        elements.appGridContainer.style.width = `${state.totalPages * 100}%`;
+        for (let i = 0; i < state.totalPages; i++) {
+            const pageDiv = document.createElement('div');
+            pageDiv.classList.add('app-grid');
+            pageDiv.id = `appGridPage${i + 1}`;
+            pageDiv.style.width = `${100 / state.totalPages}%`;
+
+            const pageApps = state.allApps.slice(i * state.appsPerPage, (i + 1) * state.appsPerPage);
+            pageApps.forEach(app => {
+                const button = document.createElement('button');
+                button.classList.add('app-button');
+                button.setAttribute('data-package-name', app.packageName);
+                button.setAttribute('title', `${app.label} (${app.packageName})`);
+
+                const iconDiv = document.createElement('div');
+                iconDiv.classList.add('app-icon');
+                iconDiv.textContent = app.letter || '?';
+
+                const labelSpan = document.createElement('span');
+                labelSpan.textContent = app.label;
+
+                button.appendChild(iconDiv);
+                button.appendChild(labelSpan);
+
+                button.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+                        const packageName = button.getAttribute('data-package-name');
+                        state.ws.send(JSON.stringify({ action: 'launchApp', packageName }));
+                        closeAppDrawer();
+                    }
+                });
+                pageDiv.appendChild(button);
+            });
+            elements.appGridContainer.appendChild(pageDiv);
+        }
+    }
+
+    if (state.totalPages > 1) {
+        for (let i = 0; i < state.totalPages; i++) {
+            const dot = document.createElement('span');
+            dot.classList.add('dot');
+            dot.setAttribute('data-page', i + 1);
+            dot.addEventListener('click', (e) => {
+                e.stopPropagation();
+                showPage(i + 1);
+            });
+            elements.paginationContainer.appendChild(dot);
+            elements.paginationDots.push(dot);
+        }
+    }
+
+    if (state.currentPage > state.totalPages && state.totalPages > 0) {
+        state.currentPage = state.totalPages;
+    } else if (state.currentPage <= 0 && state.totalPages > 0) {
+        state.currentPage = 1;
+    } else if (state.totalPages === 0) {
+        state.currentPage = 1;
+    }
+
+    showPage(state.currentPage);
+}
+
+function showPage(pageNumber) {
+    let targetPage = parseInt(pageNumber, 10);
+    if (isNaN(targetPage) || targetPage <= 0) targetPage = 1;
+    if (targetPage > state.totalPages && state.totalPages > 0) targetPage = state.totalPages;
+    if (state.totalPages === 0) targetPage = 1;
+
+    if (state.totalPages > 0) {
+        const translateX = -((targetPage - 1) * (100 / state.totalPages));
+        elements.appGridContainer.style.transform = `translateX(${translateX}%)`;
+    }
+
+    elements.paginationDots.forEach((dot, index) => {
+        dot.classList.toggle('active', index === targetPage - 1);
+    });
+
+    elements.prevPageButton.disabled = targetPage === 1 || state.totalPages === 0;
+    elements.nextPageButton.disabled = targetPage === state.totalPages || state.totalPages <= 1;
+    state.currentPage = targetPage;
+}
+
+function openAppDrawer() {
+    closeActivePanel();
+    elements.appDrawer.classList.add('active');
+    activePanel = 'appDrawer';
+    showPage(state.currentPage || 1);
+    showTaskbar();
+    appendLog('App Drawer opened');
+}
+
+
+function closeAppDrawer() {
+    elements.appDrawer.classList.remove('active');
+    if (activePanel === 'appDrawer') {
+        activePanel = null;
+    }
+    appendLog('App Drawer closed');
+    showTaskbar();
+}
+
+elements.prevPageButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (state.currentPage > 1) {
+        showPage(state.currentPage - 1);
+    }
+});
+
+elements.nextPageButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (state.currentPage < state.totalPages) {
+        showPage(state.currentPage + 1);
+    }
+});
+
+
+elements.appDrawerButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (activePanel === 'appDrawer') {
+        closeAppDrawer();
+    } else {
+        openAppDrawer();
+    }
+});
+
+
 function openPanel(panelId) {
     closeActivePanel();
     const panel = document.getElementById(panelId);
     if (panel) {
         panel.classList.add('active');
         activePanel = panelId;
+        appendLog(`${panelId} opened`);
+        showTaskbar();
     }
 }
 
 function closeActivePanel() {
     if (activePanel) {
-        const panel = document.getElementById(activePanel);
-        if (panel) {
-            panel.classList.remove('active');
+        const panelToClose = document.getElementById(activePanel) || elements[activePanel];
+        if (panelToClose) {
+            panelToClose.classList.remove('active');
+            appendLog(`${activePanel} closed`);
         }
+        const previouslyActivePanel = activePanel;
         activePanel = null;
+        
+        if (previouslyActivePanel !== 'appDrawer') {
+            showTaskbar();
+        }
     }
 }
+
+document.addEventListener('click', (e) => {
+    const target = e.target;
+
+    if (activePanel === 'appDrawer') {
+        if (elements.appDrawer.classList.contains('active') &&
+            !elements.appDrawerContent.contains(target) &&
+            target !== elements.appDrawerButton && !elements.appDrawerButton.contains(target)
+           ) {
+            closeAppDrawer();
+        }
+        return;
+    }
+
+    if (activePanel) {
+        let clickedOnCurrentPanelOrTrigger = false;
+        if (activePanel === 'audioPanel') {
+            if (audioPanel.contains(target) || target === speakerButton || speakerButton.contains(target)) {
+                clickedOnCurrentPanelOrTrigger = true;
+            }
+        } else if (activePanel === 'quickSettingsPanel') {
+            if (quickSettingsPanel.contains(target) || target === quickSettingsTrigger || quickSettingsTrigger.contains(target)) {
+                clickedOnCurrentPanelOrTrigger = true;
+            }
+        }
+
+        if (!clickedOnCurrentPanelOrTrigger) {
+            closeActivePanel();
+        }
+    }
+});
 
 
 elements.streamArea.addEventListener('mousemove', showTaskbar);
 elements.streamArea.addEventListener('mouseleave', () => {
-     clearTimeout(taskbarHideTimeout);
-     hideTaskbar();
+    clearTimeout(taskbarHideTimeout);
+    if (!activePanel) {
+        hideTaskbar();
+    }
 });
 elements.streamArea.addEventListener('touchstart', showTaskbar, { passive: true });
 
 
-pinToggleButton.removeEventListener('click', handlePinToggle);
-pinToggleButton.addEventListener('click', () => {
+pinToggleButton.addEventListener('click', (e) => {
+    e.stopPropagation();
     const currentTime = Date.now();
     const timeSinceLastClick = currentTime - lastPinToggleClickTime;
 
@@ -4533,11 +4734,18 @@ pinToggleButton.addEventListener('click', () => {
     } else {
         handlePinToggle(false);
     }
-
     lastPinToggleClickTime = currentTime;
+
+    if (isTaskbarPinned) {
+        showTaskbar(); 
+        clearTimeout(taskbarHideTimeout);
+    } else {
+        showTaskbar();
+    }
 });
 
-backButton.addEventListener('click', () => {
+backButton.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ action: 'navAction', key: 'back' }));
         appendLog('Sent Back navigation command');
@@ -4547,7 +4755,8 @@ backButton.addEventListener('click', () => {
     }
 });
 
-homeButton.addEventListener('click', () => {
+homeButton.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ action: 'navAction', key: 'home' }));
         appendLog('Sent Home navigation command');
@@ -4557,7 +4766,8 @@ homeButton.addEventListener('click', () => {
     }
 });
 
-recentsButton.addEventListener('click', () => {
+recentsButton.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ action: 'navAction', key: 'recents' }));
         appendLog('Sent Recents navigation command');
@@ -4655,16 +4865,9 @@ const sendFinalVolume = () => {
 mediaVolumeSlider.addEventListener('mouseup', sendFinalVolume);
 mediaVolumeSlider.addEventListener('touchend', sendFinalVolume);
 
-wifiToggleBtn.addEventListener('click', handleWifiToggle);
-
-
-
-document.addEventListener('click', (e) => {
-    if (!audioPanel.contains(e.target) && e.target !== speakerButton &&
-        !quickSettingsPanel.contains(e.target) && e.target !== quickSettingsTrigger && !quickSettingsTrigger.contains(e.target))
-    {
-        closeActivePanel();
-    }
+document.getElementById('wifiToggleBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    handleWifiToggle();
 });
 
 
@@ -4692,9 +4895,6 @@ function updateBatteryLevel(level) {
     const batteryLevel = parseInt(level, 10);
 
     batteryLevelSpan.textContent = `${batteryLevel}`;
-    updateStatus(`Battery level: ${batteryLevel}%`);
-    appendLog(`Updated battery level: ${batteryLevel}%`);
-
     const batteryFill = document.querySelector('.battery-fill');
     const batteryIcon = document.querySelector('.battery-icon');
     if (batteryFill) {
@@ -4722,15 +4922,58 @@ elements.toggleLogBtn.addEventListener('click', () => {
     elements.logContent.classList.toggle('hidden', isExpanded);
 });
 
-setInterval(updateClock, 5000);
-updateClock();
-updateWifiIndicator();
-updatePinToggleIcon();
-updateSpeakerIcon();
-updateSliderBackground(mediaVolumeSlider);
+
+const HIDE_HEADER_TIMEOUT_MS = 2500;
+
+function showPageHeader() {
+    if (elements.header.classList.contains('hidden')) {
+        elements.header.classList.remove('hidden');
+    }
+}
+
+function hidePageHeader() {
+    if (!state.isHeaderMouseOver && elements.header && !elements.header.classList.contains('hidden')) {
+        elements.header.classList.add('hidden');
+    }
+}
+
+function resetHeaderTimeout() {
+    clearTimeout(state.headerScrollTimeout);
+    state.headerScrollTimeout = setTimeout(hidePageHeader, HIDE_HEADER_TIMEOUT_MS);
+}
+
+window.addEventListener('scroll', () => {
+    showPageHeader();
+    resetHeaderTimeout();
+});
+
+elements.header.addEventListener('mouseenter', () => {
+    state.isHeaderMouseOver = true;
+    clearTimeout(state.headerScrollTimeout);
+    showPageHeader();
+});
+
+elements.header.addEventListener('mouseleave', () => {
+    state.isHeaderMouseOver = false;
+    resetHeaderTimeout();
+});
 
 
-appendLog('Idle');
-elements.stopButton.disabled = true;
+document.addEventListener('DOMContentLoaded', () => {
+    const initialTheme = document.body.getAttribute('data-theme') || 'dark';
+    elements.themeToggle.setAttribute('aria-checked', initialTheme === 'dark' ? 'true' : 'false');
+    
+    setInterval(updateClock, 5000);
+    updateClock();
+    updateWifiIndicator();
+    updatePinToggleIcon();
+    updateSpeakerIcon();
+    updateSliderBackground(mediaVolumeSlider);
+    
+    appendLog('Application initialized. Current theme: ' + initialTheme);
+    elements.stopButton.disabled = true;
+    showPageHeader();
+    resetHeaderTimeout();
+});
 }).call(this)}).call(this,require("buffer").Buffer)
 },{"buffer":2,"h264-converter":5}]},{},[12]);
