@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scrcpy Desktop</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
 </head>
 <body data-theme="dark">
     <header>
@@ -16,32 +17,128 @@
     <div class="app-container">
         <aside class="sidebar">
             <div class="controls">
-                <div class="settings">
-                    <div class="setting">
-                        <label for="maxSize">Maximum Size (px)</label>
-                        <input type="number" id="maxSize" value="0" min="0" step="10">
-                    </div>
-                    <div class="setting">
-                        <label for="maxFps">Maximum FPS</label>
-                        <input type="number" id="maxFps" value="60" min="0" max="120" step="1">
-                    </div>
-                    <div class="setting">
-                        <label for="bitrate">Bitrate (Mbps)</label>
-                        <input type="number" id="bitrate" value="8" min="1" step="1">
-                    </div>
-                    <div class="setting">
-                        <label for="enableAudio">Enable Audio</label>
-                        <input type="checkbox" id="enableAudio">
-                    </div>
-                    <div class="setting">
-                        <label for="enableControl">Enable Control</label>
-                        <input type="checkbox" id="enableControl" checked>
-                    </div>
-                </div>
                 <div class="buttons">
                     <button id="startBtn">Start Stream</button>
                     <button id="stopBtn" disabled>Stop Stream</button>
                     <button id="fullscreenBtn">Fullscreen</button>
+					<small>Double-click taskbar pin ▲/▼ to toggle fullscreen.</small>
+                </div>
+            </div>
+			<div class="card connection-settings">
+				<h3>Connection</h3>
+                <button id="addWirelessDeviceBtn" class="button-fullwidth">Add Wireless Device</button>
+				<label for="devices">Devices:</label>
+				<div class="device-select-container">
+					<select id="devices"></select>
+					<button id="refreshButton" title="Refresh Devices">
+						<svg class="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M23 4v6h-6"></path>
+							<path d="M1 20v-6h6"></path>
+							<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+							<path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
+						</svg>
+					</button>
+				</div>
+			</div>		
+            <div class="card display-settings">
+                <h3>Display</h3>
+                <label for="resolution" id="resolutionLabel">Resolution:</label>
+                <select id="resolution">
+				    <option value="reset">Native Resolution</option>
+                    <option value="480x320">480x320</option>
+                    <option value="1024x600">1024x600</option>
+                    <option value="1280x720">1280x720</option>
+                    <option value="1280x800">1280x800</option>
+                    <option value="1366x768">1366x768</option>
+                    <option value="1440x900">1440x900</option>
+                    <option value="1600x900">1600x900</option>
+                    <option value="1680x1050">1680x1050</option>
+                    <option value="1920x1080" selected>1920x1080</option>
+                    <option value="1920x1200">1920x1200</option>
+                    <option value="2560x1440">2560x1440</option>
+                    <option value="2560x1600">2560x1600</option>
+                    <option value="3200x1800">3200x1800</option>
+                    <option value="3840x2160">3840x2160</option>
+                </select>
+                <input type="text" id="customResolution" placeholder="Custom Resolution (e.g., 1920x1080)">
+                <label for="dpi" id="dpiLabel">DPI:</label>
+                <select id="dpi">
+				    <option value="reset">Native DPI</option>
+                    <option value="160" selected>160dpi</option>
+                    <option value="240">240dpi</option>
+                    <option value="320">320dpi</option>
+                    <option value="480">480dpi</option>
+                    <option value="640">640dpi</option>
+                </select>
+                <input type="number" id="customDpi" placeholder="Custom DPI (e.g., 120)">
+                <label for="maxFps">Max FPS:</label>
+                <select id="maxFps">
+                    <option value="30">30 FPS</option>
+                    <option value="60" selected>60 FPS</option>
+                    <option value="120">120 FPS</option>
+                    <option value="240">240 FPS</option>
+                </select>
+                <label for="rotationLock" id="rotationLockLabel">Scrcpy Orientation:</label>
+                <select id="rotationLock">
+                    <option value="0">Default (0°)</option>
+                    <option value="90">Rotate Right (90°)</option>
+                    <option value="180">Flip Upside Down (180°)</option>
+                    <option value="270">Rotate Left (270°)</option>
+                </select>
+            </div>
+            <div class="card performance-settings">
+                <h3>Performance</h3>
+                <label for="bitrate">Bitrate:</label>
+                <select id="bitrate">
+                    <option value="2">2 Mbps</option>
+                    <option value="5">5 Mbps</option>
+                    <option value="8" selected>8 Mbps</option>
+                </select>
+                <input type="number" id="customBitrate" placeholder="Custom Bitrate (Mbps)">
+                <small>Higher bitrate = better quality, more bandwidth.</small>
+            </div>
+            <div class="card display-config">
+                <h3>Display Mode</h3>
+                <label>Choose display output:</label>
+                <small>Options are mutually exclusive.</small>
+                <div class="checkbox-group display-mode-group">
+                    <input type="checkbox" id="displayModeDefault" name="displayMode" value="default" checked>
+                    <label for="displayModeDefault">Default</label>
+                    <input type="checkbox" id="displayModeOverlay" name="displayMode" value="overlay">
+                    <label for="displayModeOverlay">Overlay</label>
+                    <input type="checkbox" id="displayModeVirtual" name="displayMode" value="virtual">
+                    <label for="displayModeVirtual">Virtual Display</label>
+                    <input type="checkbox" id="displayModeNative" name="displayMode" value="native_taskbar">
+                    <label for="displayModeNative">Native Taskbar</label>
+                    <input type="checkbox" id="displayModeDex" name="displayMode" value="dex">
+                    <label for="displayModeDex">Samsung DeX</label>
+                </div>
+                <div class="rotate-button-container">
+                    <label for="rotateButton" class="rotate-button-label">Rotate Device Screen (ADB)</label>
+                    <button id="rotateButton" disabled class="button-disabled">
+                        <svg class="rotate-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M23 4v6h-6"></path>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                        <span id="rotateSpinner" class="spinner" style="display: none;"></span>
+                    </button>
+                </div>
+            </div>
+            <div class="card additional-options">
+                <h3>Additional Options</h3>
+                <label>Toggle features:</label>
+                <small>Select options below.</small>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="noPowerOn">
+                    <label for="noPowerOn" id="noPowerOnLabel">No Power On</label>
+                    <input type="checkbox" id="turnScreenOff">
+                    <label for="turnScreenOff" id="turnScreenOffLabel">Turn Screen Off</label>
+                    <input type="checkbox" id="powerOffOnClose">
+                    <label for="powerOffOnClose" id="powerOffOnCloseLabel">Power Off On Close</label>
+                    <input type="checkbox" id="enableAudio">
+                    <label for="enableAudio" id="enableAudioLabel">Enable Audio</label>
+                    <input type="checkbox" id="enableControl"checked>
+                    <label for="enableControl" id="enableControlLabel">Enable Control</label>
                 </div>
             </div>
             <div id="logArea" class="log-area">
@@ -127,7 +224,7 @@
                     <div class="panel-content">
                         <div class="slider-group">
                             <span class="icon">
-                                <svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <svg class="speaker-icon unmuted" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2 enforce">
                                     <path d="M5 9h4l4-4v14l-4-4H5zm10 0c1.5 1 1.5 5 0 6"/>
                                 </svg>
                                 <svg class="speaker-icon muted hidden" width="24" height="24" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -201,6 +298,48 @@
             </div>
         </main>
     </div>
+
+    <div id="addWirelessDeviceModalOverlay" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <span class="close-button" id="closeAddWirelessModalBtn">&times;</span>
+            <h3>Add Wireless Device</h3>
+            <div class="modal-section">
+                <h4>Connect via IP Address</h4>
+                <input type="text" id="ipAddressInput" placeholder="e.g., 192.168.1.10:5555">
+                <button id="connectByIpBtn" class="modal-button">Connect</button>
+                <div id="ipConnectStatus" class="modal-status"></div>
+            </div>
+            <div class="modal-separator">OR</div>
+            <div class="modal-section">
+                <h4>Pair using QR Code</h4>
+                <button id="pairByQrBtn" class="modal-button">Pair with QR Code</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="qrPairingModalOverlay" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <span class="close-button" id="closeQrPairingModalBtn">&times;</span>
+            <h3>Pair with QR Code</h3>
+            <p id="qrInstructions" class="modal-instructions">
+                1. On your phone, go to Developer options -> Wireless debugging.<br>
+                2. Tap 'Pair device with QR code' and scan the QR code shown here.<br>
+                3. Ensure your PC and phone are on the same Wi-Fi network.<br><br>
+                Status messages will appear below. If pairing fails, try toggling Wireless Debugging off and on, then try again.<br>
+                After successful connection, close this dialog and use the main 'Start Stream' button.
+            </p>
+            <div id="qrCodeDisplay" class="qr-code-container"></div>
+            <div id="qrPairingStatus" class="modal-status">
+                <span id="qrPairingSpinner" class="spinner" style="display: none;"></span>
+                <span id="qrPairingMessage">Initializing...</span>
+            </div>
+            <button id="qrPairingDoneBtn" class="modal-button" style="display: none;">Done</button>
+        </div>
+    </div>
+
+    <footer>
+        © 2025 <a href="https://github.com/serifpersia" target="_blank">serifpersia</a>. All rights reserved.
+    </footer>    
     <script src="main.js"></script>
 </body>
 </html>

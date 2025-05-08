@@ -16,6 +16,8 @@
     "browserify": "^17.0.1",
     "express": "^5.1.0",
     "h264-converter": "^0.1.4",
+    "nanoid": "^5.1.5",
+    "node-dns-sd": "^1.0.1",
     "ws": "^8.18.1"
   }
 }
