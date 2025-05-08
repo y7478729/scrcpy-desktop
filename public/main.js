@@ -4063,7 +4063,6 @@ const startStreaming = async () => {
 	elements.startButton.disabled = true;
 	elements.stopButton.disabled = false;
 	elements.adbDevicesSelect.disabled = true;
-	elements.refreshButton.disabled = true;
 
 	state.isRunning = true;
 	state.controlEnabledAtStart = elements.enableControlInput.checked;
@@ -4118,7 +4117,7 @@ const startStreaming = async () => {
 	};
 
 	const selectedResolution = elements.customResolutionInput.value.trim() || elements.resolutionSelect.value;
-	const selectedDpi = elements.customDpiInput.value.trim() || elements.dpiSelect.value;
+	let selectedDpi = elements.customDpiInput.value.trim() || elements.dpiSelect.value;
 
 	startMessage.resolution = selectedResolution;
 	startMessage.dpi = selectedDpi;
@@ -4131,7 +4130,7 @@ const startStreaming = async () => {
 			updateStatus("Overlay Mode: Fetching initial displays...");
 			const initialDisplaysResponse = await sendAdbCommand({
 				commandType: 'getDisplayList',
-				deviceId: state.selectedDeviceId
+					deviceId: state.selectedDeviceId
 			});
 			const initialDisplayIds = initialDisplaysResponse.data.map(d => d.id);
 
@@ -4147,7 +4146,7 @@ const startStreaming = async () => {
 			await new Promise(resolve => setTimeout(resolve, 2000));
 			const updatedDisplaysResponse = await sendAdbCommand({
 				commandType: 'getDisplayList',
-				deviceId: state.selectedDeviceId
+					deviceId: state.selectedDeviceId
 			});
 			const updatedDisplayIds = updatedDisplaysResponse.data.map(d => d.id);
 
@@ -4160,30 +4159,57 @@ const startStreaming = async () => {
 
 		} else if (state.currentDisplayMode === 'native_taskbar') {
 			updateStatus("Native Taskbar Mode: Setting WM properties...");
-			if (selectedResolution !== "reset") {
-				appendLog('Attempting to set WM size...');
+
+			let finalResolution = selectedResolution;
+			let finalDpi = selectedDpi;
+			let originalWidth = null;
+			let originalHeight = null;
+			
+			if (finalResolution !== "reset" && finalResolution.includes('x')) {
+				[originalWidth, originalHeight] = finalResolution.split('x').map(Number);
+				finalResolution = `${originalHeight}x${originalWidth}`;
+				appendLog(`Flipped resolution to ${finalResolution} for native_taskbar.`);
+			}
+			if (originalHeight !== null && finalDpi !== "reset") {
+				const currentDpiValue = parseInt(finalDpi, 10);
+				if (!isNaN(currentDpiValue)) {
+					const targetSmallestWidth = 600;
+					const calculatedMagicDpi = Math.round((originalHeight / targetSmallestWidth) * 160);
+
+					if (currentDpiValue > calculatedMagicDpi) {
+						finalDpi = calculatedMagicDpi.toString();
+						appendLog(`Original DPI ${currentDpiValue} was higher than calculated magic DPI ${calculatedMagicDpi} for original height ${originalHeight}. Using ${finalDpi}.`);
+					} else {
+						appendLog(`Original DPI ${currentDpiValue} is not higher than calculated magic DPI ${calculatedMagicDpi} for original height ${originalHeight}. Keeping original DPI.`);
+					}
+				}
+			}
+			if (finalResolution !== "reset") {
+				appendLog(`Attempting to set WM size to ${finalResolution}...`);
 				await sendAdbCommand({
 					commandType: 'setWmSize',
 					deviceId: state.selectedDeviceId,
-					resolution: selectedResolution
+					resolution: finalResolution
 				});
 				appendLog('WM size command sent/responded.');
 			}
-			if (selectedDpi !== "reset") {
-				appendLog('Attempting to set WM density...');
+
+			if (finalDpi !== "reset") {
+				appendLog(`Attempting to set WM density to ${finalDpi}...`);
 				await sendAdbCommand({
 					commandType: 'setWmDensity',
 					deviceId: state.selectedDeviceId,
-					dpi: selectedDpi
+					dpi: finalDpi
 				});
 				appendLog('WM density command sent/responded.');
 			}
 			updateStatus("Native Taskbar Mode: WM properties set.");
-		}
 
+			startMessage.resolution = finalResolution;
+			startMessage.dpi = finalDpi;
+		}
 		state.ws.send(JSON.stringify(startMessage));
 		initVideoConverter();
-
 	} catch (error) {
 		appendLog(`Error during pre-start ADB commands: ${error.message}`, true);
 		stopStreaming(false);
@@ -5084,84 +5110,81 @@ elements.header.addEventListener('mouseleave', () => {
 });
 
 function updateDisplayOptionsState() {
-	const isStreaming = state.isRunning;
-	const deviceSelected = !!state.selectedDeviceId;
-	const canInteractWithOptions = !isStreaming && deviceSelected;
+    const isStreaming = state.isRunning;
+    const deviceSelected = !!state.selectedDeviceId;
+    const canInteractWithOptions = !isStreaming && deviceSelected;
 
-	elements.bitrateSelect.disabled = !canInteractWithOptions;
-	elements.customBitrateInput.disabled = !canInteractWithOptions;
-	elements.maxFpsSelect.disabled = !canInteractWithOptions;
-	elements.noPowerOnInput.disabled = !canInteractWithOptions;
-	elements.enableAudioInput.disabled = !canInteractWithOptions;
-	elements.enableControlInput.disabled = !canInteractWithOptions;
+    elements.bitrateSelect.disabled = !canInteractWithOptions;
+    elements.customBitrateInput.disabled = !canInteractWithOptions;
+    elements.maxFpsSelect.disabled = !canInteractWithOptions;
+    elements.noPowerOnInput.disabled = !canInteractWithOptions;
+    elements.enableAudioInput.disabled = !canInteractWithOptions;
+    elements.enableControlInput.disabled = !canInteractWithOptions;
 
-	const enableControlChecked = elements.enableControlInput.checked;
-	elements.turnScreenOffInput.disabled = !canInteractWithOptions || !enableControlChecked;
-	elements.powerOffOnCloseInput.disabled = !canInteractWithOptions || !enableControlChecked;
+    const enableControlChecked = elements.enableControlInput.checked;
+    elements.turnScreenOffInput.disabled = !canInteractWithOptions || !enableControlChecked;
+    elements.powerOffOnCloseInput.disabled = !canInteractWithOptions || !enableControlChecked;
 
-	elements.displayModeCheckboxes.forEach(cb => cb.disabled = !canInteractWithOptions);
+    elements.displayModeCheckboxes.forEach(cb => cb.disabled = !canInteractWithOptions);
 
-	const mode = state.currentDisplayMode;
-	const isDex = mode === 'dex';
-	const isNative = mode === 'native_taskbar';
-	const isOverlay = mode === 'overlay';
-	const isDefault = mode === 'default';
+    const mode = state.currentDisplayMode;
+    const isDex = mode === 'dex';
+    const isNative = mode === 'native_taskbar';
+    const isOverlay = mode === 'overlay';
+    const isDefault = mode === 'default';
 
-	elements.resolutionSelect.disabled = !canInteractWithOptions || isDex || isDefault;
-	elements.customResolutionInput.disabled = !canInteractWithOptions || isDex || isDefault;
-	elements.dpiSelect.disabled = !canInteractWithOptions || isDex || isDefault;
-	elements.customDpiInput.disabled = !canInteractWithOptions || isDex || isDefault;
-	elements.rotationLockSelect.disabled = !canInteractWithOptions || isDex || isNative;
+    elements.resolutionSelect.disabled = !canInteractWithOptions || isDex || isDefault;
+    elements.customResolutionInput.disabled = !canInteractWithOptions || isDex || isDefault;
+    elements.dpiSelect.disabled = !canInteractWithOptions || isDex || isDefault;
+    elements.customDpiInput.disabled = !canInteractWithOptions || isDex || isDefault;
+    elements.rotationLockSelect.disabled = !canInteractWithOptions || isDex || isNative;
 
-	elements.rotateAdbButton.disabled = !canInteractWithOptions || !(isNative || isOverlay);
-	elements.rotateAdbButton.classList.toggle('button-disabled', elements.rotateAdbButton.disabled);
+    const rotateButtonShouldBeDisabled = !deviceSelected || !(isNative || isOverlay);
+    elements.rotateAdbButton.disabled = rotateButtonShouldBeDisabled;
+    elements.rotateAdbButton.classList.toggle('button-disabled', elements.rotateAdbButton.disabled);
 
-	const updateLabelVisualState = (label, inputElement, isSpecialClass = false) => {
-		if (label && inputElement) {
-			const isDisabled = inputElement.disabled;
-			const activeClass = isSpecialClass ? 'disabled-label' : 'disabled';
-			const inactiveClass = isSpecialClass ? 'disabled' : 'disabled-label';
+    const updateLabelVisualState = (label, inputElement, isSpecialClass = false) => {
+        if (label && inputElement) {
+            const isDisabled = inputElement.disabled;
+            const activeClass = isSpecialClass ? 'disabled-label' : 'disabled';
+            const inactiveClass = isSpecialClass ? 'disabled' : 'disabled-label';
 
-			label.classList.toggle(activeClass, isDisabled);
-			if (isDisabled) {
-				label.classList.remove(inactiveClass);
-			}
-		}
-	};
+            label.classList.toggle(activeClass, isDisabled);
+            if (isDisabled) {
+                label.classList.remove(inactiveClass);
+            }
+        }
+    };
 
-	updateLabelVisualState(elements.resolutionLabel, elements.resolutionSelect);
-	updateLabelVisualState(elements.dpiLabel, elements.dpiSelect);
-	updateLabelVisualState(elements.rotationLockLabel, elements.rotationLockSelect);
-	updateLabelVisualState(elements.rotateAdbButtonLabel, elements.rotateAdbButton);
-	updateLabelVisualState(elements.noPowerOnLabel, elements.noPowerOnInput);
-	updateLabelVisualState(elements.turnScreenOffLabel, elements.turnScreenOffInput, true);
-	updateLabelVisualState(elements.powerOffOnCloseLabel, elements.powerOffOnCloseInput, true);
-	updateLabelVisualState(document.querySelector('label[for=enableAudio]'), elements.enableAudioInput);
-	updateLabelVisualState(document.querySelector('label[for=enableControl]'), elements.enableControlInput);
+    updateLabelVisualState(elements.resolutionLabel, elements.resolutionSelect);
+    updateLabelVisualState(elements.dpiLabel, elements.dpiSelect);
+    updateLabelVisualState(elements.rotationLockLabel, elements.rotationLockSelect);
+    updateLabelVisualState(elements.rotateAdbButtonLabel, elements.rotateAdbButton);
+    updateLabelVisualState(elements.noPowerOnLabel, elements.noPowerOnInput);
+    updateLabelVisualState(elements.turnScreenOffLabel, elements.turnScreenOffInput, true);
+    updateLabelVisualState(elements.powerOffOnCloseLabel, elements.powerOffOnCloseInput, true);
+    updateLabelVisualState(document.querySelector('label[for=enableAudio]'), elements.enableAudioInput);
+    updateLabelVisualState(document.querySelector('label[for=enableControl]'), elements.enableControlInput);
 
-	if (isStreaming) {
-		const allConfigControls = [
-			elements.resolutionSelect, elements.customResolutionInput, elements.dpiSelect, elements.customDpiInput,
-			elements.bitrateSelect, elements.customBitrateInput, elements.maxFpsSelect, elements.rotationLockSelect,
-			elements.noPowerOnInput, elements.turnScreenOffInput, elements.powerOffOnCloseInput,
-			elements.enableAudioInput, elements.enableControlInput, ...elements.displayModeCheckboxes, elements.rotateAdbButton
-		];
-		allConfigControls.forEach(el => el.disabled = true);
+    if (isStreaming) {
+        const controlsToDisableDuringStream = [
+            elements.resolutionSelect, elements.customResolutionInput, elements.dpiSelect, elements.customDpiInput,
+            elements.bitrateSelect, elements.customBitrateInput, elements.maxFpsSelect, elements.rotationLockSelect,
+            elements.noPowerOnInput, elements.turnScreenOffInput, elements.powerOffOnCloseInput,
+            elements.enableAudioInput, elements.enableControlInput, ...elements.displayModeCheckboxes
+        ];
+        controlsToDisableDuringStream.forEach(el => el.disabled = true);
 
-		updateLabelVisualState(elements.resolutionLabel, elements.resolutionSelect);
-		updateLabelVisualState(elements.dpiLabel, elements.dpiSelect);
-		updateLabelVisualState(elements.rotationLockLabel, elements.rotationLockSelect);
-		updateLabelVisualState(elements.rotateAdbButtonLabel, elements.rotateAdbButton);
-		updateLabelVisualState(elements.noPowerOnLabel, elements.noPowerOnInput);
-		updateLabelVisualState(elements.turnScreenOffLabel, elements.turnScreenOffInput, true);
-		updateLabelVisualState(elements.powerOffOnCloseLabel, elements.powerOffOnCloseInput, true);
-		updateLabelVisualState(document.querySelector('label[for=enableAudio]'), elements.enableAudioInput);
-		updateLabelVisualState(document.querySelector('label[for=enableControl]'), elements.enableControlInput);
-
-		elements.rotateAdbButton.classList.add('button-disabled');
-	}
+        updateLabelVisualState(elements.resolutionLabel, elements.resolutionSelect);
+        updateLabelVisualState(elements.dpiLabel, elements.dpiSelect);
+        updateLabelVisualState(elements.rotationLockLabel, elements.rotationLockSelect);
+        updateLabelVisualState(elements.noPowerOnLabel, elements.noPowerOnInput);
+        updateLabelVisualState(elements.turnScreenOffLabel, elements.turnScreenOffInput, true);
+        updateLabelVisualState(elements.powerOffOnCloseLabel, elements.powerOffOnCloseInput, true);
+        updateLabelVisualState(document.querySelector('label[for=enableAudio]'), elements.enableAudioInput);
+        updateLabelVisualState(document.querySelector('label[for=enableControl]'), elements.enableControlInput);
+    }
 }
-
 
 elements.displayModeCheckboxes.forEach(checkbox => {
 	checkbox.addEventListener('change', () => {
