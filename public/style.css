@@ -611,9 +611,13 @@ header h1 {
 .custom-taskbar.taskbar-visible {
     opacity: 1;
     visibility: visible;
-    pointer-events: auto;
 }
 
+.custom-taskbar.taskbar-visible:not(.pinned) {
+    pointer-events: auto;
+}
+ 
+ 
 .taskbar-main-content {
     display: flex;
     flex-grow: 1;
@@ -646,13 +650,21 @@ header h1 {
 }
 
 .custom-taskbar.pinned .taskbar-main-content {
-    opacity: 0;
+	opacity: 0;
     pointer-events: none;
 }
 
 .custom-taskbar:not(.taskbar-visible) .taskbar-pin-area {
     opacity: 0;
     pointer-events: none;
+}
+
+.custom-taskbar.taskbar-visible.pinned {
+    pointer-events: none;
+}
+
+.custom-taskbar.taskbar-visible.pinned .pin-toggle-button {
+    pointer-events: auto;
 }
 
 .nav-button,
