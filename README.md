@@ -6,9 +6,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/serifpersia/scrcpy-desktop.svg?style=flat-square)](https://github.com/serifpersia/scrcpy-desktop/stargazers)
 
-![{210DC752-5FE7-4769-A0C3-FE24725D5C36}](https://github.com/user-attachments/assets/17fda434-b2b0-4cd3-bde5-bb16d69faa28)
+![442328283-17fda434-b2b0-4cd3-bde5-bb16d69faa28](https://github.com/user-attachments/assets/704efc85-6aab-4ff9-93d7-9086cffdeeba)
 
-</div>
+<div align="center">
+
 
 **Scrcpy Desktop** is a user-friendly web application that streams your Android device's screen and audio directly to your browser. It utilizes the powerful `scrcpy` server for efficient screen and audio capture.
 
