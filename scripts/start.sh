@@ -11,34 +11,19 @@ echo
 echo -e "\033[1;32mStarting scrcpy desktop...\033[0m"
 echo
 
-echo -e "\033[1;33mInstalling dependencies with npm install...\033[0m"
-npm install
-if [ $? -ne 0 ]; then
-    echo -e "\033[1;31mError: npm install failed!\033[0m"
-    read -p "Press Enter to exit..."
-    exit $?
-else
-    echo -e "\033[1;32mSuccess: npm install completed!\033[0m"
-fi
-echo
 
-echo -e "\033[1;33mCleaning previous build artifacts...\033[0m"
-npm run clean
-if [ $? -ne 0 ]; then
-    echo -e "\033[1;31mWarning: npm run clean failed, proceeding anyway...\033[0m"
+if [ ! -d "node_modules" ]; then
+    echo -e "\033[1;33mServer dependencies not found. Installing with npm install --omit=dev...\033[0m"
+    npm install --omit=dev
+    if [ $? -ne 0 ]; then
+        echo -e "\033[1;31mError: npm install failed!\033[0m"
+        read -p "Press Enter to exit..."
+        exit $?
+    else
+        echo -e "\033[1;32mSuccess: npm install completed!\033[0m"
+    fi
 else
-    echo -e "\033[1;32mSuccess: Clean completed!\033[0m"
-fi
-echo
-
-echo -e "\033[1;33mBuilding project with npm run build...\033[0m"
-npm run build
-if [ $? -ne 0 ]; then
-    echo -e "\033[1;31mError: npm run build failed!\033[0m"
-    read -p "Press Enter to exit..."
-    exit $?
-else
-    echo -e "\033[1;32mSuccess: npm run build completed!\033[0m"
+    echo -e "\033[1;36mFound existing server dependencies (node_modules). Skipping install.\033[0m"
 fi
 echo
 

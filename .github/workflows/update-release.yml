@@ -7,7 +7,8 @@ permissions:
   contents: write
 
 jobs:
-  update-release:
+  build-and-release:
+    name: Build wrapping and Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -15,59 +16,79 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Delete Existing Latest Release (Published and Draft)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Clean previous builds
+        run: npm run clean
+
+      - name: Build Project Frontend
+        run: npm run build
+
+      - name: Create Release Package
         run: |
-          echo "Checking for existing releases with tag 'latest'..."
-          # List all releases and check for any with tag 'latest'
-          RELEASES=$(gh release list --json tagName,isDraft,name --limit 100)
+          mkdir scrcpy-desktop
+          echo "Copying server code (src-server)..."
+          cp -r src-server scrcpy-desktop/
+          echo "Copying built frontend assets (public/dist)..."
+          cp -r public/dist scrcpy-desktop/public/
+          echo "Copying vendor files (public/vendor)..."
+          cp -r public/vendor scrcpy-desktop/public/
+          echo "Copying package files (package.json, package-lock.json)..."
+          cp package.json package-lock.json scrcpy-desktop/
+          echo "Copying simplified start scripts (start.bat, start.sh)..."
+          cp scripts/start.bat scripts/start.sh scrcpy-desktop/
+          echo "Copying documentation (README.md, LICENSE)..."
+          if [ -f README.md ]; then cp README.md scrcpy-desktop/; fi
+          if [ -f LICENSE ]; then cp LICENSE scrcpy-desktop/; fi
+          echo "Creating archive (scrcpy-desktop-latest.zip)..."
+          zip -r scrcpy-desktop-latest.zip scrcpy-desktop/
+        working-directory: ${{ github.workspace }}
 
-          # Check for published releases with tag 'latest'
-          PUBLISHED_EXISTS=$(echo "$RELEASES" | jq -r '.[] | select(.tagName == "latest" and .isDraft == false) | .tagName')
-          if [ -n "$PUBLISHED_EXISTS" ]; then
-            echo "Deleting published release with tag 'latest'..."
+      - name: Delete Existing Latest Release
+        run: |
+          if gh release view "latest" --json tagName > /dev/null 2>&1; then
+            echo "Deleting existing release with tag 'latest'..."
             gh release delete "latest" --yes
           else
-            echo "No published release with tag 'latest' found."
-          fi
-
-          # Check for draft releases with tag 'latest'
-          DRAFT_EXISTS=$(echo "$RELEASES" | jq -r '.[] | select(.tagName == "latest" and .isDraft == true) | .tagName')
-          if [ -n "$DRAFT_EXISTS" ]; then
-            echo "Deleting draft release with tag 'latest'..."
-            gh release delete "latest" --yes
-          else
-            echo "No draft release with tag 'latest' found."
+            echo "No release with tag 'latest' found to delete."
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Delete Existing Latest Tag
         run: |
-          echo "Checking for existing tag 'latest'..."
           if git rev-parse "latest" >/dev/null 2>&1; then
-            echo "Deleting tag 'latest'..."
+            echo "Deleting local tag 'latest'..."
             git tag -d "latest"
-            git push origin :refs/tags/latest
+            echo "Deleting remote tag 'latest'..."
+            git push origin :refs/tags/latest --force || echo "Remote tag 'latest' not found or already deleted."
           else
-            echo "No tag 'latest' found."
+            echo "No local tag 'latest' found to delete."
           fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create New Latest Tag
         run: |
-          echo "Creating new tag 'latest'..."
-          git tag latest
-          git push origin latest
+          echo "Creating new tag 'latest' on commit ${{ github.sha }}..."
+          git tag latest ${{ github.sha }}
+          git push origin latest --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create New Latest Release
+        id: create_release
         run: |
           echo "Creating new release with tag 'latest'..."
           gh release create "latest" \
             --title "latest" \
-            --notes "Automatically updated to the latest commit on ${{ github.sha }}" \
-            --target ${{ github.sha }}
+            --notes "Automatically updated to commit ${{ github.sha }} on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
+            --target ${{ github.sha }} \
+            scrcpy-desktop-latest.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
