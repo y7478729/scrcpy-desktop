@@ -3419,6 +3419,12 @@ const AMOTION_EVENT_BUTTON_SECONDARY = 2;
 const AMOTION_EVENT_BUTTON_TERTIARY = 4;
 const POINTER_ID_MOUSE = -1n;
 
+const CONTROL_MSG_TYPE_SET_SCREEN_POWER_MODE_CLIENT = 10;
+const SCREEN_POWER_MODE_OFF_CLIENT = 0;
+
+const CONTROL_MSG_TYPE_BACK_OR_SCREEN_ON_CLIENT = 4;
+const CONTROL_MSG_TYPE_SCROLL_CLIENT = 3;
+
 let volumeChangeTimeout = null;
 const VOLUME_THROTTLE_MS = 150;
 let lastVolumeSendTime = 0;
@@ -3483,8 +3489,8 @@ const elements = {
 	qrPairingDoneBtn: document.getElementById('qrPairingDoneBtn'),
 	displayModeCheckboxes: document.querySelectorAll('input[name="displayMode"]'),
 	rotateAdbButton: document.getElementById('rotateButton'),
-	rotateAdbButtonLabel: document.querySelector('.rotate-button-label'),
-	rotateAdbSpinner: document.getElementById('rotateSpinner'),
+	screenOffButton: document.getElementById('screenOffButton'),
+
 	noPowerOnLabel: document.getElementById('noPowerOnLabel'),
 	turnScreenOffLabel: document.getElementById('turnScreenOffLabel'),
 	powerOffOnCloseLabel: document.getElementById('powerOffOnCloseLabel'),
@@ -3875,6 +3881,14 @@ const handleMouseDown = (event) => {
 	if (!state.isRunning || !state.controlEnabledAtStart || !state.deviceWidth || !state.deviceHeight) return;
 	event.preventDefault();
 	state.isMouseDown = true;
+	
+	if (event.button === 2) {
+		sendBackButtonControl();
+        state.isMouseDown = false;
+        state.currentMouseButtons = 0;
+        return;
+    }
+	
 	let buttonFlag = 0;
 	switch (event.button) {
 		case 0:
@@ -3937,6 +3951,73 @@ const handleMouseLeave = (event) => {
 	state.isMouseDown = false;
 	state.currentMouseButtons = 0;
 };
+
+function handleWheelEvent(event) {
+    if (!state.isRunning || !state.controlEnabledAtStart) {
+        return;
+    }
+    if (!state.deviceWidth || state.deviceWidth <= 0 || !state.deviceHeight || state.deviceHeight <= 0) {
+        return;
+    }
+
+    event.preventDefault();
+
+    let coords = getScaledCoordinates(event);
+    if (!coords) {
+        if (state.lastMousePosition.x > 0 || state.lastMousePosition.y > 0) {
+            coords = state.lastMousePosition;
+        } else {
+            return;
+        }
+    }
+
+    let hscroll_float = 0.0;
+    let vscroll_float = 0.0;
+    const scrollSensitivity = 2.5;
+
+    if (event.deltaX !== 0) {
+        hscroll_float = event.deltaX > 0 ? -scrollSensitivity : scrollSensitivity;
+    }
+    if (event.deltaY !== 0) {
+        vscroll_float = event.deltaY > 0 ? -scrollSensitivity : scrollSensitivity;
+    }
+
+    hscroll_float = Math.max(-1.0, Math.min(1.0, hscroll_float));
+    vscroll_float = Math.max(-1.0, Math.min(1.0, vscroll_float));
+
+    if (hscroll_float === 0.0 && vscroll_float === 0.0) {
+        return;
+    }
+
+    const hscroll_fixed_point_short = Math.round(hscroll_float * 32767.0);
+    const vscroll_fixed_point_short = Math.round(vscroll_float * 32767.0);
+
+    const buffer = new ArrayBuffer(21);
+    const dataView = new DataView(buffer);
+
+    let offset = 0;
+    dataView.setUint8(offset, 3);
+    offset += 1;
+
+    dataView.setInt32(offset, coords.x, false);
+    offset += 4;
+    dataView.setInt32(offset, coords.y, false);
+    offset += 4;
+
+    dataView.setUint16(offset, state.deviceWidth, false);
+    offset += 2;
+    dataView.setUint16(offset, state.deviceHeight, false);
+    offset += 2;
+
+    dataView.setInt16(offset, hscroll_fixed_point_short, false);
+    offset += 2;
+    dataView.setInt16(offset, vscroll_fixed_point_short, false);
+    offset += 2;
+
+    dataView.setInt32(offset, state.currentMouseButtons, false);
+
+    sendControlMessage(buffer);
+}
 
 function populateDeviceSelect(devices) {
 	elements.adbDevicesSelect.innerHTML = '';
@@ -4680,6 +4761,7 @@ elements.videoElement.addEventListener('mousedown', handleMouseDown);
 document.addEventListener('mouseup', handleMouseUp);
 elements.videoElement.addEventListener('mousemove', handleMouseMove);
 elements.videoElement.addEventListener('mouseleave', handleMouseLeave);
+elements.videoElement.addEventListener('wheel', handleWheelEvent, { passive: false })
 elements.videoElement.addEventListener('contextmenu', (e) => {
 	if (state.controlEnabledAtStart && state.isRunning) e.preventDefault();
 });
@@ -5139,10 +5221,6 @@ function updateDisplayOptionsState() {
     elements.customDpiInput.disabled = !canInteractWithOptions || isDex || isDefault;
     elements.rotationLockSelect.disabled = !canInteractWithOptions || isDex || isNative;
 
-    const rotateButtonShouldBeDisabled = !deviceSelected || !(isNative || isOverlay);
-    elements.rotateAdbButton.disabled = rotateButtonShouldBeDisabled;
-    elements.rotateAdbButton.classList.toggle('button-disabled', elements.rotateAdbButton.disabled);
-
     const updateLabelVisualState = (label, inputElement, isSpecialClass = false) => {
         if (label && inputElement) {
             const isDisabled = inputElement.disabled;
@@ -5159,7 +5237,6 @@ function updateDisplayOptionsState() {
     updateLabelVisualState(elements.resolutionLabel, elements.resolutionSelect);
     updateLabelVisualState(elements.dpiLabel, elements.dpiSelect);
     updateLabelVisualState(elements.rotationLockLabel, elements.rotationLockSelect);
-    updateLabelVisualState(elements.rotateAdbButtonLabel, elements.rotateAdbButton);
     updateLabelVisualState(elements.noPowerOnLabel, elements.noPowerOnInput);
     updateLabelVisualState(elements.turnScreenOffLabel, elements.turnScreenOffInput, true);
     updateLabelVisualState(elements.powerOffOnCloseLabel, elements.powerOffOnCloseInput, true);
@@ -5209,12 +5286,10 @@ elements.enableControlInput.addEventListener('change', function() {
 });
 
 async function rotateDeviceScreen() {
-	if (!state.selectedDeviceId || elements.rotateAdbButton.disabled) {
-		appendLog("Cannot rotate: No device selected or button disabled.", true);
+	if (!state.selectedDeviceId) {
+		appendLog("Cannot rotate: No device selected.", true);
 		return;
 	}
-	elements.rotateAdbButton.disabled = true;
-	elements.rotateAdbSpinner.style.display = 'inline-block';
 	try {
 		const response = await sendAdbCommand({
 			commandType: 'adbRotateScreen',
@@ -5227,14 +5302,62 @@ async function rotateDeviceScreen() {
 		}
 	} catch (error) {
 		appendLog(`Error rotating screen: ${error.message}`, true);
-	} finally {
-		elements.rotateAdbButton.disabled = false;
-		elements.rotateAdbSpinner.style.display = 'none';
-		updateDisplayOptionsState();
 	}
 }
+
 elements.rotateAdbButton.addEventListener('click', rotateDeviceScreen);
 
+
+async function turnScreenOff() {
+    if (!state.isRunning) {
+        appendLog("Cannot turn screen off: Streaming not active.", true);
+        return;
+    }
+    if (!state.controlEnabledAtStart) {
+        appendLog("Cannot turn screen off: Control was not enabled for this session.", true);
+        return;
+    }
+
+    const buffer = new ArrayBuffer(2);
+    const dataView = new DataView(buffer);
+
+    dataView.setUint8(0, CONTROL_MSG_TYPE_SET_SCREEN_POWER_MODE_CLIENT);
+    dataView.setUint8(1, SCREEN_POWER_MODE_OFF_CLIENT);
+
+    sendControlMessage(buffer);
+    appendLog("Sent screen off command to device.");
+}
+
+async function sendBackButtonControl() {
+    if (!state.isRunning) {
+        appendLog("Cannot turn screen off: Streaming not active.", true);
+        return;
+    }
+    if (!state.controlEnabledAtStart) {
+        appendLog("Cannot turn screen off: Control was not enabled for this session.", true);
+        return;
+    }
+
+    const bufferDown = new ArrayBuffer(2);
+    const dataViewDown = new DataView(bufferDown);
+
+    dataViewDown.setUint8(0, CONTROL_MSG_TYPE_BACK_OR_SCREEN_ON_CLIENT);
+    dataViewDown.setUint8(1, 0);
+
+    sendControlMessage(bufferDown);
+	
+    const bufferUp = new ArrayBuffer(2);
+    const dataViewUp = new DataView(bufferUp);
+
+    dataViewUp.setUint8(0, CONTROL_MSG_TYPE_BACK_OR_SCREEN_ON_CLIENT);
+    dataViewUp.setUint8(1, 1);
+
+    sendControlMessage(bufferUp);
+	
+    appendLog("Client: Sent 'Back' command (Type 4, Actions DOWN then UP).");
+}
+
+elements.screenOffButton.addEventListener('click', turnScreenOff);
 
 document.addEventListener('DOMContentLoaded', () => {
 	elements.themeToggle.setAttribute('aria-checked', document.body.getAttribute('data-theme') === 'dark' ? 'true' : 'false');

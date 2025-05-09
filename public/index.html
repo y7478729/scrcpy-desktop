@@ -113,16 +113,6 @@
                     <input type="checkbox" id="displayModeDex" name="displayMode" value="dex">
                     <label for="displayModeDex">Samsung DeX</label>
                 </div>
-                <div class="rotate-button-container">
-                    <label for="rotateButton" class="rotate-button-label">Rotate Device Screen (ADB)</label>
-                    <button id="rotateButton" disabled class="button-disabled">
-                        <svg class="rotate-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M23 4v6h-6"></path>
-                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                        </svg>
-                        <span id="rotateSpinner" class="spinner" style="display: none;"></span>
-                    </button>
-                </div>
             </div>
             <div class="card additional-options">
                 <h3>Additional Options</h3>
@@ -255,26 +245,14 @@
                             </span>
                             <span>Wi-Fi</span>
                         </button>
-                        <button class="panel-toggle-button" disabled>
-                            <span class="icon">🔆</span>
-                            <span>Brightness</span>
-                        </button>
-                        <button class="panel-toggle-button" disabled>
-                            <span class="icon">🔄</span>
+                        <button class="panel-toggle-button">
+                            <span class="icon" id="rotateButton">🔄</span>
                             <span>Rotation</span>
-                        </button>
-                        <button class="panel-toggle-button" disabled>
-                            <span class="icon">✈️</span>
-                            <span>Flight Mode</span>
-                        </button>
-                        <button class="panel-toggle-button" disabled>
-                            <span class="icon">🔦</span>
-                            <span>Torch</span>
-                        </button>
-                        <button class="panel-toggle-button" disabled>
-                            <span class="icon">🌙</span>
-                            <span>Dark Mode</span>
-                        </button>
+						</button>
+						<button class="panel-toggle-button">
+							<span class="icon" id="screenOffButton">💡</span>
+							<span>Screen Off</span>
+						</button>	
                     </div>
                 </div>
                 <div id="appDrawer" class="app-drawer">
