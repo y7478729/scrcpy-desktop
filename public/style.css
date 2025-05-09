@@ -1023,16 +1023,14 @@ header h1 {
     transition: fill 0.3s ease, height 0.3s ease, y 0.3s ease;
 }
 
-.battery-icon.low-battery .battery-fill,
-.battery-icon.low-battery {
-    fill: #e53e3e;
-    stroke: #e53e3e;
+.battery-icon.low-battery .battery-fill{
+    fill: none;
+    stroke: red;
 }
 
-[data-theme="dark"] .battery-icon.low-battery .battery-fill,
-[data-theme="dark"] .battery-icon.low-battery {
-    fill: #fc8181;
-    stroke: #fc8181;
+[data-theme="dark"] .battery-icon.low-battery .battery-fill{
+    fill: none;
+    stroke: red;
 }
 
 .app-drawer {
@@ -1328,10 +1326,10 @@ footer a {
     gap: 8px;
 }
 .modal-status.success {
-    color: green;
+    color: #00cc00;
 }
 .modal-status.error {
-    color: red;
+    color: #e53935;
 }
 
 .qr-code-container {
