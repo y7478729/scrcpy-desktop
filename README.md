@@ -1,8 +1,14 @@
+<div align="center">
+
 # Scrcpy Desktop
 
 [![](https://img.shields.io/travis/your_username/scrcpy-desktop.svg?style=flat-square)](https://travis-ci.org/your_username/scrcpy-desktop)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 [![GitHub stars](https://img.shields.io/github/stars/serifpersia/scrcpy-desktop.svg?style=flat-square)](https://github.com/serifpersia/scrcpy-desktop/stargazers)
+
+![{210DC752-5FE7-4769-A0C3-FE24725D5C36}](https://github.com/user-attachments/assets/17fda434-b2b0-4cd3-bde5-bb16d69faa28)
+
+</div>
 
 **Scrcpy Desktop** is a user-friendly web application that streams your Android device's screen and audio directly to your browser. It utilizes the powerful `scrcpy` server for efficient screen and audio capture.
 
@@ -31,33 +37,30 @@ Follow these steps to get Scrcpy Desktop running locally:
     npm install
 	npm run build
     ```
+    Automated run.bat/sh script do a full rebuild. Make sure you chmod +x run.sh before calling it.
+
 ## Usage
 
 1.  **Start the Application:**
 
-	Use run.bat/.sh to start automatic install/build/start process or start it manually after npm install & build steps
-
     ```bash
     npm start
+    ```
+	Use run.bat/.sh to start automatic install/build/start process or start it manually after npm install & build steps
+	If you are using release zip build, just run start.bat/sh (chmod +x on linux before calling the start.sh script)
+	These start scripts are automating npm install and start commands(npm install step is using ommit to avoid installing dev npm packages used for build, release build already has javascript files prebuilt)
 
-2.  **Access the Web Interface:**
-    *   Open your web browser and navigate to the URL provided in the terminal (usually `http://localhost:8000` or similar).
+3.  **Access the Web Interface:**
+    *   Open your web browser and navigate to the URL provided in the terminal (`http://localhost:8000`).
 
-3.  **Control Streaming:**
+4.  **Control Streaming:**
     *   Use the web interface controls to select your desired settings (resolution, bitrate, FPS, audio).
-    *   Click the "Start Stream" button (or similar).
-    *   Enjoy your device's screen and audio in the browser!
+    *   Click the "Start Stream" button.
 ---
 
 ## ⚙️ Configuration
 
-Most streaming parameters can be configured directly through the web interface:
-
-*   **Resolution:** Adjust the streaming video width and height.
-*   **FPS (Frames Per Second):** Control the smoothness of the video.
-*   **Bitrate:** Set the video encoding bitrate (higher means better quality but more bandwidth).
-*   **Audio:** Toggle audio streaming on or off.
----
+Most scrcpy streaming parameters can be configured directly through the web interface and custom adb commands like screen rotation, wm size and density can be used for modes like native taskbar...
 
 ## 🙏 Acknowledgements
 
@@ -67,8 +70,9 @@ Most streaming parameters can be configured directly through the web interface:
 
 
 ## Legacy
-	You can checkout earlier commmit or download legacy release to use legacy scrcpy-desktop which uses python and native scrcpy client
-	Read more about that version in [LEGACY_README](LEGACY_README)
-	
+
+You can checkout earlier commmit or download legacy release to use legacy scrcpy-desktop which uses python and native scrcpy client
+Read more about that version in [LEGACY_README](LEGACY_README)
+
 ## License
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
