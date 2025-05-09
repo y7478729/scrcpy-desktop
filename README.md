@@ -53,6 +53,7 @@ Follow these steps to get Scrcpy Desktop running locally:
 
 3.  **Access the Web Interface:**
     *   Open your web browser and navigate to the URL provided in the terminal (`http://localhost:8000`).
+    *   Supermium chrome fork might work best if your pc struggles to play video.
 
 4.  **Control Streaming:**
     *   Use the web interface controls to select your desired settings (resolution, bitrate, FPS, audio).
