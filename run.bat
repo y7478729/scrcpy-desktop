@@ -1,13 +1,10 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-:: Set console color (green text on black background)
 color 0a
 
-:: Clear screen
 cls
 
-:: Display header with improved ASCII art
 echo.
 echo   [1;33m---------------------------------------------[0m
 echo   [1;36m               scrcpy-desktop                [0m        
@@ -18,42 +15,49 @@ echo.
 echo [1;32mStarting scrcpy desktop...[0m
 echo.
 
-:: Run npm install
-echo [1;33mInstalling dependencies with npm install...[0m
+echo  Installing dependencies with npm install...
 call npm install
 if %ERRORLEVEL% neq 0 (
-    echo [1;31mError: npm install failed![0m
+    echo  Error: npm install failed!
     pause
     exit /b %ERRORLEVEL%
 ) else (
-    echo [1;32mSuccess: npm install completed![0m
+    echo  Success: npm install completed!
 )
+echo.
 
-:: Run npm run build
-echo [1;33mRunning npm run build...[0m
+echo  Cleaning previous build artifacts...
+call npm run clean
+if %ERRORLEVEL% neq 0 (
+    echo  Warning: npm run clean failed, proceeding anyway...
+) else (
+    echo  Success: Clean completed!
+)
+echo.
+
+echo  Building project with npm run build...
 call npm run build
 if %ERRORLEVEL% neq 0 (
-    echo [1;31mError: npm run build failed![0m
+    echo  Error: npm run build failed!
     pause
     exit /b %ERRORLEVEL%
 ) else (
-    echo [1;32mSuccess: npm run build completed![0m
+    echo  Success: npm run build completed!
 )
+echo.
 
-:: Run npm start
-echo [1;33mRunning npm start...[0m
+echo  Running npm start...
 call npm start
 if %ERRORLEVEL% neq 0 (
-    echo [1;31mError: npm start failed![0m
+    echo  Error: npm start failed!
     pause
     exit /b %ERRORLEVEL%
 ) else (
-    echo [1;32mSuccess: npm start completed![0m
+    echo  Success: npm start completed!
 )
 
-:: Final message
 echo.
-echo [1;32mAll commands executed successfully![0m
-echo [1;33mscrcpy desktop is now running.[0m
+echo  All commands executed successfully!
+echo  scrcpy desktop is now running.
 pause
 exit /b 0

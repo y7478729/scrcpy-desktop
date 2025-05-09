@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scrcpy Desktop</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
 </head>
 <body data-theme="dark">
     <header>
@@ -73,8 +72,8 @@
                 <input type="number" id="customDpi" placeholder="Custom DPI (e.g., 120)">
                 <label for="maxFps">Max FPS:</label>
                 <select id="maxFps">
-                    <option value="30">30 FPS</option>
-                    <option value="60" selected>60 FPS</option>
+                    <option value="30" selected>30 FPS</option>
+                    <option value="60">60 FPS</option>
                     <option value="120">120 FPS</option>
                     <option value="240">240 FPS</option>
                 </select>
@@ -257,19 +256,9 @@
                 </div>
                 <div id="appDrawer" class="app-drawer">
                     <div class="app-drawer-content">
-                        <button class="drawer-nav-button prev-page">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="15 6 9 12 15 18"/>
-                            </svg>
-                        </button>
                         <div class="app-grid-viewport">
                             <div id="appGridContainer"></div>
                         </div>
-                        <button class="drawer-nav-button next-page">
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="9 6 15 12 9 18"/>
-                            </svg>
-                        </button>
                     </div>
                     <div class="drawer-pagination"></div>
                 </div>
@@ -318,6 +307,6 @@
     <footer>
         © 2025 <a href="https://github.com/serifpersia" target="_blank">serifpersia</a>. All rights reserved.
     </footer>    
-    <script src="main.js"></script>
+    <script type="module" src="../src-client/main.js"></script>
 </body>
 </html>
