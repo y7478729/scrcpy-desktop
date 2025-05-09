@@ -2065,245 +2065,292 @@ function parseSPS(naluBuffer) {
 	}
 }
 
-function processSingleSocket(socket, client, session) {
-	const dynBuffer = socket.dynamicBuffer;
-	let processedSomething = false,
-		keepProcessing = true;
-	if (!socket.codecProcessed) socket.codecProcessed = false;
-	while (keepProcessing && !socket.destroyed && socket.state !== 'UNKNOWN') {
-		keepProcessing = false;
-		switch (socket.state) {
-			case 'AWAITING_INITIAL_DATA':
-				if (!session.deviceNameReceived) {
-					if (dynBuffer.length >= DEVICE_NAME_LENGTH) {
-						const deviceName = dynBuffer.buffer.subarray(0, DEVICE_NAME_LENGTH).toString('utf8').split('\0')[0];
-						client.ws.send(JSON.stringify({
-							type: MESSAGE_TYPES.DEVICE_NAME,
-							name: deviceName
-						}));
-						dynBuffer.buffer.copy(dynBuffer.buffer, 0, DEVICE_NAME_LENGTH, dynBuffer.length);
-						dynBuffer.length -= DEVICE_NAME_LENGTH;
-						session.deviceNameReceived = true;
-						socket.didHandleDeviceName = true;
-						socket.state = 'AWAITING_METADATA';
-						keepProcessing = true;
-						attemptIdentifyControlByDeduction(session, client);
-					}
-				} else {
-					socket.state = 'AWAITING_METADATA';
-					keepProcessing = true;
-				}
-				break;
-			case 'AWAITING_METADATA':
-				let identifiedThisPass = false;
-				if (!session.videoSocket && session.expectedSockets.includes('video')) {
-					if (dynBuffer.length >= VIDEO_METADATA_LENGTH) {
-						const potentialCodecId = dynBuffer.buffer.readUInt32BE(0);
-						if (potentialCodecId === CODEC_IDS.H264) {
-							const width = dynBuffer.buffer.readUInt32BE(4);
-							const height = dynBuffer.buffer.readUInt32BE(8);
-							log(LogLevel.INFO, `[Session ${session.scid}] Identified Video socket (${width}x${height})`);
-							session.videoSocket = socket;
-							socket.type = 'video';
-							identifiedThisPass = true;
-							session.unidentifiedSockets?.delete(socket.remoteId);
-							client.ws.send(JSON.stringify({
-								type: MESSAGE_TYPES.VIDEO_INFO,
-								codecId: potentialCodecId,
-								width,
-								height
-							}));
-							dynBuffer.buffer.copy(dynBuffer.buffer, 0, VIDEO_METADATA_LENGTH, dynBuffer.length);
-							dynBuffer.length -= VIDEO_METADATA_LENGTH;
-							socket.state = 'STREAMING';
-							checkAndSendStreamingStarted(session, client);
-							keepProcessing = true;
-						}
-					}
-				}
-				if (!identifiedThisPass && !session.audioSocket && session.expectedSockets.includes('audio')) {
-					if (dynBuffer.length >= AUDIO_METADATA_LENGTH) {
-						const potentialCodecId = dynBuffer.buffer.readUInt32BE(0);
-						if (potentialCodecId === CODEC_IDS.AAC) {
-							log(LogLevel.INFO, `[Session ${session.scid}] Identified Audio socket`);
-							session.audioSocket = socket;
-							socket.type = 'audio';
-							socket.codecProcessed = true;
-							identifiedThisPass = true;
-							session.unidentifiedSockets?.delete(socket.remoteId);
-							client.ws.send(JSON.stringify({
-								type: MESSAGE_TYPES.AUDIO_INFO,
-								codecId: potentialCodecId
-							}));
-							dynBuffer.buffer.copy(dynBuffer.buffer, 0, AUDIO_METADATA_LENGTH, dynBuffer.length);
-							dynBuffer.length -= AUDIO_METADATA_LENGTH;
-							socket.state = 'STREAMING';
-							checkAndSendStreamingStarted(session, client);
-							keepProcessing = true;
-						}
-					}
-				}
-				if (!identifiedThisPass && !session.controlSocket && session.expectedSockets.length === 1 && session.expectedSockets[0] === 'control' && socket.didHandleDeviceName) {
-					log(LogLevel.INFO, `[Session ${session.scid}] Identified Control socket (only expected stream)`);
-					session.controlSocket = socket;
-					socket.type = 'control';
-					identifiedThisPass = true;
-					session.unidentifiedSockets?.delete(socket.remoteId);
-					socket.state = 'STREAMING';
-					const worker = new Worker(path.join(__dirname, 'serverControlWorker.js'), {
-						workerData: {
-							scid: session.scid,
-							clientId: session.clientId,
-							CURRENT_LOG_LEVEL
-						}
-					});
-					workers.set(session.scid, worker);
-					worker.on('message', (msg) => {
-						if (msg.type === 'writeToSocket') {
-							const currentSession = sessions.get(msg.scid);
-							if (currentSession?.controlSocket && !currentSession.controlSocket.destroyed) {
-								try {
-									currentSession.controlSocket.write(Buffer.from(msg.data, 'base64'));
-								} catch (e) {
-									const currentClient = wsClients.get(currentSession.clientId);
-									if (currentClient?.ws?.readyState === WebSocket.OPEN) currentClient.ws.send(JSON.stringify({
-										type: MESSAGE_TYPES.ERROR,
-										message: `Control error: ${e.message}`
-									}));
-								}
-							}
-						} else if (msg.type === 'error') {
-							const currentClient = wsClients.get(session.clientId);
-							if (currentClient?.ws?.readyState === WebSocket.OPEN) currentClient.ws.send(JSON.stringify({
-								type: MESSAGE_TYPES.ERROR,
-								message: `Control error: ${msg.error}`
-							}));
-						}
-					});
-					worker.on('error', (err) => {
-						log(LogLevel.ERROR, `[Worker ${session.scid}] Error: ${err.message}`);
-						workers.delete(session.scid);
-					});
-					worker.on('exit', (code) => {
-						log(LogLevel.INFO, `[Worker ${session.scid}] Exited with code ${code}`);
-						workers.delete(session.scid);
-					});
-					checkAndSendStreamingStarted(session, client);
-					keepProcessing = true;
-				}
-				if (identifiedThisPass) attemptIdentifyControlByDeduction(session, client);
-				else {
-					attemptIdentifyControlByDeduction(session, client);
-					if (!session.controlSocket && session.expectedSockets.includes('control')) keepProcessing = false;
-					else keepProcessing = dynBuffer.length > 0;
-				}
-				break;
-			case 'STREAMING':
-				if (!socket.type || socket.type === 'unknown') {
-					socket.state = 'AWAITING_METADATA';
-					keepProcessing = true;
-					break;
-				}
-				if (socket.type === 'video') {
-					if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
-						const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
-						const keyFrameFlag = (dynBuffer.buffer.readUInt8(0) >> 6) & 0x1;
-						const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
-						const packetSize = dynBuffer.buffer.readUInt32BE(8);
-						if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
-							log(LogLevel.ERROR, `[TCP Video ${socket.scid}] Invalid packet size: ${packetSize}`);
-							socket.state = 'UNKNOWN';
-							socket.destroy();
-							return;
-						}
-						const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
-						if (dynBuffer.length >= totalPacketLength) {
-							const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
-							if (configFlag) {
-								const resolutionInfo = parseSPS(payload);
-								if (resolutionInfo) {
-									const newWidth = resolutionInfo.width,
-										newHeight = resolutionInfo.height;
-									if (session.currentWidth !== newWidth || session.currentHeight !== newHeight) {
-										session.currentWidth = newWidth;
-										session.currentHeight = newHeight;
-										if (client && client.ws?.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify({
-											type: 'resolutionChange',
-											width: newWidth,
-											height: newHeight
-										}));
-									}
-								}
-							}
-							const typeBuffer = Buffer.alloc(1);
-							typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
-							client.ws.send(Buffer.concat([typeBuffer, payload]), {
-								binary: true
-							});
-							dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
-							dynBuffer.length -= totalPacketLength;
-							keepProcessing = true;
-						} else keepProcessing = false;
-					} else keepProcessing = false;
-				} else if (socket.type === 'audio') {
-					if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
-						const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
-						const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
-						const packetSize = dynBuffer.buffer.readUInt32BE(8);
-						if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
-							log(LogLevel.ERROR, `[TCP Audio ${socket.scid}] Invalid packet size: ${packetSize}`);
-							socket.state = 'UNKNOWN';
-							socket.destroy();
-							return;
-						}
-						const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
-						if (dynBuffer.length >= totalPacketLength) {
-							const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
-							if (configFlag && !session.audioMetadata) {
-								try {
-									session.audioMetadata = parseAudioSpecificConfig(payload);
-									client.ws.send(JSON.stringify({
-										type: MESSAGE_TYPES.AUDIO_INFO,
-										codecId: CODEC_IDS.AAC,
-										metadata: session.audioMetadata
-									}));
-								} catch (e) {
-									log(LogLevel.ERROR, `[TCP Audio ${socket.scid}] Failed to parse audio config: ${e.message}`);
-									socket.destroy();
-									return;
-								}
-							}
-							if (!configFlag && session.audioMetadata) {
-								const adtsHeader = createAdtsHeader(payload.length, session.audioMetadata);
-								const adtsFrame = Buffer.concat([adtsHeader, payload]);
-								const typeBuffer = Buffer.alloc(1);
-								typeBuffer.writeUInt8(BINARY_TYPES.AUDIO, 0);
-								client.ws.send(Buffer.concat([typeBuffer, adtsFrame]), {
-									binary: true
-								});
-							}
-							dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
-							dynBuffer.length -= totalPacketLength;
-							keepProcessing = true;
-						} else keepProcessing = false;
-					} else keepProcessing = false;
-				} else if (socket.type === 'control') {
-					if (dynBuffer.length > 0) {
-						client.ws.send(JSON.stringify({
-							type: MESSAGE_TYPES.DEVICE_MESSAGE,
-							data: dynBuffer.buffer.subarray(0, dynBuffer.length).toString('base64')
-						}));
-						dynBuffer.length = 0;
-					}
-					keepProcessing = false;
-				}
-				break;
-			default:
-				socket.state = 'UNKNOWN';
-				keepProcessing = false;
-		}
-	}
+function _handleAwaitingInitialData(socket, dynBuffer, session, client) {
+    if (!session.deviceNameReceived) {
+        if (dynBuffer.length >= DEVICE_NAME_LENGTH) {
+            const deviceName = dynBuffer.buffer.subarray(0, DEVICE_NAME_LENGTH).toString('utf8').split('\0')[0];
+            client.ws.send(JSON.stringify({
+                type: MESSAGE_TYPES.DEVICE_NAME,
+                name: deviceName
+            }));
+            dynBuffer.buffer.copy(dynBuffer.buffer, 0, DEVICE_NAME_LENGTH, dynBuffer.length);
+            dynBuffer.length -= DEVICE_NAME_LENGTH;
+            session.deviceNameReceived = true;
+            socket.didHandleDeviceName = true;
+            socket.state = 'AWAITING_METADATA';
+            attemptIdentifyControlByDeduction(session, client);
+            return true;
+        }
+    } else {
+        socket.state = 'AWAITING_METADATA';
+        return true;
+    }
+    return false;
 }
+
+function _handleAwaitingMetadata(socket, dynBuffer, session, client) {
+    let identifiedThisPass = false;
+
+    if (!session.videoSocket && session.expectedSockets.includes('video')) {
+        if (dynBuffer.length >= VIDEO_METADATA_LENGTH) {
+            const potentialCodecId = dynBuffer.buffer.readUInt32BE(0);
+            if (potentialCodecId === CODEC_IDS.H264) {
+                const width = dynBuffer.buffer.readUInt32BE(4);
+                const height = dynBuffer.buffer.readUInt32BE(8);
+                log(LogLevel.INFO, `[Session ${session.scid}] Identified Video socket (${width}x${height})`);
+                session.videoSocket = socket;
+                socket.type = 'video';
+                identifiedThisPass = true;
+                session.unidentifiedSockets?.delete(socket.remoteId);
+                client.ws.send(JSON.stringify({
+                    type: MESSAGE_TYPES.VIDEO_INFO,
+                    codecId: potentialCodecId,
+                    width,
+                    height
+                }));
+                dynBuffer.buffer.copy(dynBuffer.buffer, 0, VIDEO_METADATA_LENGTH, dynBuffer.length);
+                dynBuffer.length -= VIDEO_METADATA_LENGTH;
+                socket.state = 'STREAMING';
+                checkAndSendStreamingStarted(session, client);
+            }
+        }
+    }
+
+    if (!identifiedThisPass && !session.audioSocket && session.expectedSockets.includes('audio')) {
+        if (dynBuffer.length >= AUDIO_METADATA_LENGTH) {
+            const potentialCodecId = dynBuffer.buffer.readUInt32BE(0);
+            if (potentialCodecId === CODEC_IDS.AAC) {
+                log(LogLevel.INFO, `[Session ${session.scid}] Identified Audio socket`);
+                session.audioSocket = socket;
+                socket.type = 'audio';
+                socket.codecProcessed = true;
+                identifiedThisPass = true;
+                session.unidentifiedSockets?.delete(socket.remoteId);
+                client.ws.send(JSON.stringify({
+                    type: MESSAGE_TYPES.AUDIO_INFO,
+                    codecId: potentialCodecId
+                }));
+                dynBuffer.buffer.copy(dynBuffer.buffer, 0, AUDIO_METADATA_LENGTH, dynBuffer.length);
+                dynBuffer.length -= AUDIO_METADATA_LENGTH;
+                socket.state = 'STREAMING';
+                checkAndSendStreamingStarted(session, client);
+            }
+        }
+    }
+
+    if (!identifiedThisPass && !session.controlSocket && session.expectedSockets.length === 1 && session.expectedSockets[0] === 'control' && socket.didHandleDeviceName) {
+        log(LogLevel.INFO, `[Session ${session.scid}] Identified Control socket (only expected stream)`);
+        session.controlSocket = socket;
+        socket.type = 'control';
+        identifiedThisPass = true;
+        session.unidentifiedSockets?.delete(socket.remoteId);
+        socket.state = 'STREAMING';
+        const worker = new Worker(path.join(__dirname, 'serverControlWorker.js'), {
+            workerData: {
+                scid: session.scid,
+                clientId: session.clientId,
+                CURRENT_LOG_LEVEL
+            }
+        });
+        workers.set(session.scid, worker);
+        worker.on('message', (msg) => {
+            if (msg.type === 'writeToSocket') {
+                const currentSession = sessions.get(msg.scid);
+                if (currentSession?.controlSocket && !currentSession.controlSocket.destroyed) {
+                    try {
+                        currentSession.controlSocket.write(Buffer.from(msg.data.data ? msg.data.data : msg.data)); // Handle potential {type: 'Buffer', data: [...]}
+                    } catch (e) {
+                        const currentClient = wsClients.get(currentSession.clientId);
+                        if (currentClient?.ws?.readyState === WebSocket.OPEN) currentClient.ws.send(JSON.stringify({
+                            type: MESSAGE_TYPES.ERROR,
+                            scid: msg.scid,
+                            message: `Control error: ${e.message}`
+                        }));
+                    }
+                }
+            } else if (msg.type === 'error') {
+                const currentClient = wsClients.get(session.clientId);
+                if (currentClient?.ws?.readyState === WebSocket.OPEN) currentClient.ws.send(JSON.stringify({
+                    type: MESSAGE_TYPES.ERROR,
+                    message: `Control error: ${msg.error}`
+                }));
+            }
+        });
+        worker.on('error', (err) => {
+            log(LogLevel.ERROR, `[Worker ${session.scid}] Error: ${err.message}`);
+            workers.delete(session.scid);
+        });
+        worker.on('exit', (code) => {
+            log(LogLevel.INFO, `[Worker ${session.scid}] Exited with code ${code}`);
+            workers.delete(session.scid);
+        });
+        checkAndSendStreamingStarted(session, client);
+    }
+
+    if (identifiedThisPass) {
+        attemptIdentifyControlByDeduction(session, client);
+        return true; 
+    } else {
+        attemptIdentifyControlByDeduction(session, client);
+        if (!session.controlSocket && session.expectedSockets.includes('control') && session.unidentifiedSockets?.has(socket.remoteId)) {
+             return false;
+        }
+        return dynBuffer.length > 0;
+    }
+}
+
+function _processVideoStreamPacket(socket, dynBuffer, session, client) {
+    if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
+        const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
+        const keyFrameFlag = (dynBuffer.buffer.readUInt8(0) >> 6) & 0x1;
+        const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
+        const packetSize = dynBuffer.buffer.readUInt32BE(8);
+
+        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
+            log(LogLevel.ERROR, `[TCP Video ${socket.scid}] Invalid packet size: ${packetSize}`);
+            socket.state = 'UNKNOWN';
+            socket.destroy();
+            return false;
+        }
+
+        const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
+        if (dynBuffer.length >= totalPacketLength) {
+            const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
+            if (configFlag) {
+                const resolutionInfo = parseSPS(payload);
+                if (resolutionInfo) {
+                    const newWidth = resolutionInfo.width,
+                        newHeight = resolutionInfo.height;
+                    if (session.currentWidth !== newWidth || session.currentHeight !== newHeight) {
+                        session.currentWidth = newWidth;
+                        session.currentHeight = newHeight;
+                        if (client && client.ws?.readyState === WebSocket.OPEN) client.ws.send(JSON.stringify({
+                            type: 'resolutionChange',
+                            width: newWidth,
+                            height: newHeight
+                        }));
+                    }
+                }
+            }
+            const typeBuffer = Buffer.alloc(1);
+            typeBuffer.writeUInt8(BINARY_TYPES.VIDEO, 0);
+            client.ws.send(Buffer.concat([typeBuffer, payload]), {
+                binary: true
+            });
+            dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
+            dynBuffer.length -= totalPacketLength;
+            return true;
+        }
+    }
+    return false;
+}
+
+function _processAudioStreamPacket(socket, dynBuffer, session, client) {
+    if (dynBuffer.length >= PACKET_HEADER_LENGTH) {
+        const configFlag = (dynBuffer.buffer.readUInt8(0) >> 7) & 0x1;
+        const pts = dynBuffer.buffer.readBigInt64BE(0) & BigInt('0x3FFFFFFFFFFFFFFF');
+        const packetSize = dynBuffer.buffer.readUInt32BE(8);
+
+        if (packetSize > 10 * 1024 * 1024 || packetSize < 0) {
+            log(LogLevel.ERROR, `[TCP Audio ${socket.scid}] Invalid packet size: ${packetSize}`);
+            socket.state = 'UNKNOWN';
+            socket.destroy();
+            return false;
+        }
+        const totalPacketLength = PACKET_HEADER_LENGTH + packetSize;
+        if (dynBuffer.length >= totalPacketLength) {
+            const payload = dynBuffer.buffer.subarray(PACKET_HEADER_LENGTH, totalPacketLength);
+            if (configFlag && !session.audioMetadata) {
+                try {
+                    session.audioMetadata = parseAudioSpecificConfig(payload);
+                    client.ws.send(JSON.stringify({
+                        type: MESSAGE_TYPES.AUDIO_INFO,
+                        codecId: CODEC_IDS.AAC,
+                        metadata: session.audioMetadata
+                    }));
+                } catch (e) {
+                    log(LogLevel.ERROR, `[TCP Audio ${socket.scid}] Failed to parse audio config: ${e.message}`);
+                    socket.destroy();
+                    return false;
+                }
+            }
+            if (!configFlag && session.audioMetadata) {
+                const adtsHeader = createAdtsHeader(payload.length, session.audioMetadata);
+                const adtsFrame = Buffer.concat([adtsHeader, payload]);
+                const typeBuffer = Buffer.alloc(1);
+                typeBuffer.writeUInt8(BINARY_TYPES.AUDIO, 0);
+                client.ws.send(Buffer.concat([typeBuffer, adtsFrame]), {
+                    binary: true
+                });
+            }
+            dynBuffer.buffer.copy(dynBuffer.buffer, 0, totalPacketLength, dynBuffer.length);
+            dynBuffer.length -= totalPacketLength;
+            return true;
+        }
+    }
+    return false;
+}
+
+function _processControlStreamMessage(socket, dynBuffer, session, client) {
+    if (dynBuffer.length > 0) {
+        client.ws.send(JSON.stringify({
+            type: MESSAGE_TYPES.DEVICE_MESSAGE,
+            data: dynBuffer.buffer.subarray(0, dynBuffer.length).toString('base64')
+        }));
+        dynBuffer.length = 0;
+    }
+    return false;
+}
+
+function _handleStreamingData(socket, dynBuffer, session, client) {
+    if (!socket.type || socket.type === 'unknown') {
+        socket.state = 'AWAITING_METADATA';
+        return true;
+    }
+
+    let processedPacket = false;
+    if (socket.type === 'video') {
+        processedPacket = _processVideoStreamPacket(socket, dynBuffer, session, client);
+    } else if (socket.type === 'audio') {
+        processedPacket = _processAudioStreamPacket(socket, dynBuffer, session, client);
+    } else if (socket.type === 'control') {
+        processedPacket = _processControlStreamMessage(socket, dynBuffer, session, client);
+    }
+    return processedPacket;
+}
+
+function processSingleSocket(socket, client, session) {
+    const dynBuffer = socket.dynamicBuffer;
+    if (!socket.codecProcessed) socket.codecProcessed = false;
+
+    let keepProcessing = true;
+    while (keepProcessing && !socket.destroyed && socket.state !== 'UNKNOWN') {
+        keepProcessing = false;
+
+        switch (socket.state) {
+            case 'AWAITING_INITIAL_DATA':
+                if (_handleAwaitingInitialData(socket, dynBuffer, session, client)) {
+                    keepProcessing = true;
+                }
+                break;
+            case 'AWAITING_METADATA':
+                if (_handleAwaitingMetadata(socket, dynBuffer, session, client)) {
+                    keepProcessing = true;
+                }
+                break;
+            case 'STREAMING':
+                if (_handleStreamingData(socket, dynBuffer, session, client)) {
+                    keepProcessing = true;
+                }
+                break;
+            default:
+                socket.state = 'UNKNOWN';
+                log(LogLevel.ERROR, `[TCP] Socket ${socket.scid} from ${socket.remoteId} entered invalid state: ${socket.state}. Original was: ${socket.state}`);
+                break;
+        }
+    }
+}
+
 async function gracefulShutdown(mainWss, httpServer, qrWssInstance) {
 	log(LogLevel.INFO, '[System] Initiating graceful shutdown...');
 	if (qrWssInstance) {
