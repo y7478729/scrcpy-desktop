@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build-and-release:
-    name: Build and Release
+    name: Build wrapping and Release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -33,22 +33,22 @@ jobs:
 
       - name: Create Release Package
         run: |
-          mkdir release_package
+          mkdir scrcpy-desktop
           echo "Copying server code (src-server)..."
-          cp -r src-server release_package/
+          cp -r src-server scrcpy-desktop/
           echo "Copying built frontend assets (public/dist)..."
-          cp -r public/dist release_package/public/
+          cp -r public/dist scrcpy-desktop/public/
           echo "Copying vendor files (public/vendor)..."
-          cp -r public/vendor release_package/public/
+          cp -r public/vendor scrcpy-desktop/public/
           echo "Copying package files (package.json, package-lock.json)..."
-          cp package.json package-lock.json release_package/
+          cp package.json package-lock.json scrcpy-desktop/
           echo "Copying simplified start scripts (start.bat, start.sh)..."
-          cp scripts/start.bat scripts/start.sh release_package/
+          cp scripts/start.bat scripts/start.sh scrcpy-desktop/
           echo "Copying documentation (README.md, LICENSE)..."
-          if [ -f README.md ]; then cp README.md release_package/; fi
-          if [ -f LICENSE ]; then cp LICENSE release_package/; fi
+          if [ -f README.md ]; then cp README.md scrcpy-desktop/; fi
+          if [ -f LICENSE ]; then cp LICENSE scrcpy-desktop/; fi
           echo "Creating archive (scrcpy-desktop-latest.zip)..."
-          zip -r scrcpy-desktop-latest.zip release_package/
+          zip -r scrcpy-desktop-latest.zip scrcpy-desktop/
         working-directory: ${{ github.workspace }}
 
       - name: Delete Existing Latest Release
@@ -86,7 +86,7 @@ jobs:
         run: |
           echo "Creating new release with tag 'latest'..."
           gh release create "latest" \
-            --title "Latest Build (${{ github.sha }})" \
+            --title "latest" \
             --notes "Automatically updated to commit ${{ github.sha }} on $(date -u '+%Y-%m-%d %H:%M:%S UTC')" \
             --target ${{ github.sha }} \
             scrcpy-desktop-latest.zip
