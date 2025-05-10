@@ -3,6 +3,7 @@ import { globalState } from '../state.js';
 import { appendLog } from '../loggerService.js';
 import { requestAdbDevices } from '../ui/sidebarControls.js';
 import { hideAddWirelessDeviceModal, hideQrPairingModal } from '../ui/modals.js';
+import QRCode from 'qrcode';
 
 export async function handleConnectByIp() {
 	const ipAddress = elements.ipAddressInput.value.trim();
@@ -46,7 +47,9 @@ export async function handleConnectByIp() {
 export async function handlePairByQr(connectToQrWebSocket) {
 	hideAddWirelessDeviceModal();
     elements.qrCodeDisplay.innerHTML = '';
-	if (globalState.qrCodeInstance) globalState.qrCodeInstance.clear();
+
+	globalState.qrCodeInstance = null; 
+
 	elements.qrPairingMessage.textContent = 'Initializing...';
 	elements.qrPairingSpinner.style.display = 'inline-block';
 	elements.qrPairingStatus.className = 'modal-status';
@@ -56,17 +59,29 @@ export async function handlePairByQr(connectToQrWebSocket) {
 
 	try {
 		const response = await fetch('/initiate-qr-session');
+		if (!response.ok) {
+			const errorData = await response.json().catch(() => ({ message: `HTTP error ${response.status}` }));
+			throw new Error(errorData.message || `Failed to initiate QR session: ${response.statusText}`);
+		}
 		const data = await response.json();
-		if (response.ok && data.success && data.qrString) {
+
+		if (data.success && data.qrString) {
 			elements.qrPairingMessage.textContent = 'Scan QR with your device...';
 			elements.qrPairingSpinner.style.display = 'inline-block';
-			if (globalState.qrCodeInstance) globalState.qrCodeInstance.clear();
-			elements.qrCodeDisplay.innerHTML = '';
-			globalState.qrCodeInstance = new QRCode(elements.qrCodeDisplay, {
-				text: data.qrString, width: 256, height: 256,
-				colorDark: "#000000", colorLight: "#ffffff",
-				correctLevel: QRCode.CorrectLevel.H
+			
+			const canvasElement = document.createElement('canvas');
+			elements.qrCodeDisplay.appendChild(canvasElement);
+
+			await QRCode.toCanvas(canvasElement, data.qrString, {
+				width: 256,
+				margin: 1,
+				color: {
+					dark: '#000000',
+					light: '#ffffff'
+				},
+				errorCorrectionLevel: 'H'
 			});
+			
 			connectToQrWebSocket();
 		} else {
 			elements.qrPairingMessage.textContent = data.message || 'Failed to generate QR code.';
@@ -76,6 +91,7 @@ export async function handlePairByQr(connectToQrWebSocket) {
 			globalState.isQrProcessActive = false;
 		}
 	} catch (error) {
+        appendLog(`Error in handlePairByQr: ${error.message}`, true);
 		elements.qrPairingMessage.textContent = 'Error initiating QR session: ' + error.message;
 		elements.qrPairingSpinner.style.display = 'none';
 		elements.qrPairingStatus.className = 'modal-status error';
