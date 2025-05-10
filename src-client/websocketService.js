@@ -1,7 +1,7 @@
 import { globalState } from './state.js';
 import { appendLog, updateStatus } from './loggerService.js';
 import { populateDeviceSelect, requestAdbDevices as refreshAdbDevicesSidebar } from './ui/sidebarControls.js';
-import { handleStreamingStarted, handleStreamingStopped, handleResolutionChange, handleDeviceName, handleAudioInfo, handleBatteryInfo, handleVolumeInfo, handleWifiStatusResponse, handleNavResponse, handleLauncherAppsList } from './messageHandlers.js';
+import { handleStreamingStarted, handleStreamingStopped, handleResolutionChange, handleDeviceName, handleAudioInfo, handleBatteryInfo, handleVolumeInfo, handleWifiStatusResponse, handleNavResponse, handleLauncherAppsList, handleLaunchAppResponse } from './messageHandlers.js';
 import { BINARY_TYPES } from './constants.js';
 import { handleVideoData } from './services/videoPlaybackService.js';
 import { handleAudioData as processAudioData } from './services/audioPlaybackService.js';
@@ -78,6 +78,8 @@ export function initializeWebSocket() {
                 case 'wifiStatus': handleWifiStatusResponse(message); break;
                 case 'batteryInfo': handleBatteryInfo(message); break;
                 case 'launcherAppsList': handleLauncherAppsList(message.apps); break;
+				case 'launchAppResponse': handleLaunchAppResponse(message); break;
+
                 default:
                     if(globalState.isRunning) appendLog(`Unhandled message type: ${message.type}`, true);
                     else updateStatus(`Server message: ${message.message || message.type}`);

@@ -51,6 +51,8 @@ export const elements = {
 	displayModeCheckboxes: document.querySelectorAll('input[name="displayMode"]'),
     rotateAdbButton: document.getElementById('rotateButton'),
 	screenOffButton: document.getElementById('screenOffButton'),
+	notificationPanelButton: document.getElementById('notificationPanelButton'),
+	settingsPanelButton: document.getElementById('settingsPanelButton'),
 	noPowerOnLabel: document.getElementById('noPowerOnLabel'),
 	turnScreenOffLabel: document.getElementById('turnScreenOffLabel'),
 	powerOffOnCloseLabel: document.getElementById('powerOffOnCloseLabel'),

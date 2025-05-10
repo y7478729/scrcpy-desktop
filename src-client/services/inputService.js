@@ -68,7 +68,6 @@ function sendBackButtonControlInternal() {
     sendControlMessageToServer(bufferUp);
 }
 
-
 function handleMouseDown(event) {
 	if (!globalState.isRunning || !globalState.controlEnabledAtStart || !globalState.deviceWidth || !globalState.deviceHeight) return;
 	event.preventDefault();

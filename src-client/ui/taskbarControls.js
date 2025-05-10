@@ -2,7 +2,10 @@ import { elements } from '../domElements.js';
 import { globalState } from '../state.js';
 import { sendWebSocketMessage } from '../websocketService.js';
 import { appendLog } from '../loggerService.js';
-import { HIDE_TASKBAR_TIMEOUT_MS, DOUBLE_CLICK_THRESHOLD_MS, CONTROL_MSG_TYPE_SET_SCREEN_POWER_MODE_CLIENT, SCREEN_POWER_MODE_OFF_CLIENT } from '../constants.js';
+import { HIDE_TASKBAR_TIMEOUT_MS, DOUBLE_CLICK_THRESHOLD_MS, CONTROL_MSG_TYPE_SET_SCREEN_POWER_MODE_CLIENT, 
+		 SCREEN_POWER_MODE_OFF_CLIENT, CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL, 
+		 CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL } from '../constants.js';
+		 
 import { sendControlMessageToServer } from '../websocketService.js';
 import { sendAdbCommandToServer } from '../services/adbClientService.js';
 
@@ -161,7 +164,7 @@ async function rotateDeviceScreenViaAdb() {
 	}
 }
 
-function turnScreenOffViaScrcpy() {
+function turnScreenOff() {
     if (!globalState.isRunning) { appendLog("Stream not active.", true); return; }
     if (!globalState.controlEnabledAtStart) { appendLog("Control not enabled.", true); return; }
     const buffer = new ArrayBuffer(2);
@@ -172,11 +175,31 @@ function turnScreenOffViaScrcpy() {
     appendLog("Sent screen off command.");
 }
 
+function expandNotificationPanel() {
+    if (!globalState.isRunning) { appendLog("Stream not active.", true); return; }
+    if (!globalState.controlEnabledAtStart) { appendLog("Control not enabled.", true); return; }
+    const buffer = new ArrayBuffer(1);
+    const dataView = new DataView(buffer);
+    dataView.setUint8(0, CONTROL_MSG_TYPE_EXPAND_NOTIFICATION_PANEL);
+    sendControlMessageToServer(buffer);
+    appendLog("Sent expand notification panel command.");
+}
+
+function expandSettingsPanel() {
+    if (!globalState.isRunning) { appendLog("Stream not active.", true); return; }
+    if (!globalState.controlEnabledAtStart) { appendLog("Control not enabled.", true); return; }
+    const buffer = new ArrayBuffer(1);
+    const dataView = new DataView(buffer);
+    dataView.setUint8(0, CONTROL_MSG_TYPE_EXPAND_SETTINGS_PANEL);
+    sendControlMessageToServer(buffer);
+    appendLog("Sent expand settings panel command.");
+}
+
 export function openPanel(panelId) {
 	closeActivePanel();
 	const panel = document.getElementById(panelId);
 	if (panel) {
-		panel.classList.add('active');
+		panel.classList.add('active');	
 		globalState.activePanel = panelId;
 		showTaskbar();
         clearTimeout(globalState.taskbarHideTimeout);
@@ -291,9 +314,16 @@ export function initTaskbarControls() {
         elements.rotateAdbButton.addEventListener('click', rotateDeviceScreenViaAdb);
     }
     if (elements.screenOffButton) {
-        elements.screenOffButton.addEventListener('click', turnScreenOffViaScrcpy);
+        elements.screenOffButton.addEventListener('click', turnScreenOff);
     }
 
+    if (elements.notificationPanelButton) {
+        elements.notificationPanelButton.addEventListener('click', expandNotificationPanel);
+    }
+	
+    if (elements.settingsPanelButton) {
+        elements.settingsPanelButton.addEventListener('click', expandSettingsPanel);
+    }
 
     document.addEventListener('click', (e) => {
         const target = e.target;
@@ -316,7 +346,6 @@ export function initTaskbarControls() {
             if (!clickedInsidePanelOrTrigger) closeActivePanel();
         }
     });
-
 
     updateClock();
     setInterval(updateClock, 5000);

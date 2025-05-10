@@ -104,3 +104,8 @@ export function handleLauncherAppsList(apps) {
         renderAppDrawer(apps);
     }
 }
+
+export function handleLaunchAppResponse(message) {
+    if (message.success) updateStatus(`App ${message.packageName} launched successfully.`);
+    else updateStatus(`App Launch Error: ${message.error}`);
+}

@@ -161,7 +161,7 @@ async function handleWifiToggleCommand(clientId, ws, message) {
             }
             if (!ssid || ssid === '' || ssid === '<unknown ssid>') { ws.send(JSON.stringify({ type: C.MESSAGE_TYPES.WIFI_RESPONSE, success: false, error: 'Failed to connect to SSID' })); return; }
         } else {
-            await new Promise(resolve => setTimeout(resolve, 250));
+            await new Promise(resolve => setTimeout(resolve, 500));
             const statusOutput = await adbService.streamToString(await device.shell('dumpsys wifi | grep "Wi-Fi is"'));
             isWifiOn = statusOutput.includes('Wi-Fi is enabled');
         }
