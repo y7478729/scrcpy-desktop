@@ -27,13 +27,16 @@ Before you begin, ensure you have the following installed and configured:
 Follow these steps to get Scrcpy Desktop running locally:
 
 1.  **Clone or Download the Repository:**
+
+    You can also download prebuilt release. Just run start script to get started.
+
     ```bash
 	Clone this repository or download the ZIP file. 
     git clone https://github.com/serifpersia/scrcpy-desktop.git
     cd scrcpy-desktop
     ```
 
-2.  **Install Dependencies & Build:**
+3.  **Install Dependencies & Build:**
     ```bash
     npm install
 	npm run build
