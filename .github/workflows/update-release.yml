@@ -37,7 +37,8 @@ jobs:
           echo "Copying server code (src-server)..."
           cp -r src-server scrcpy-desktop/
           echo "Copying built frontend assets (public/dist)..."
-          cp -r public/dist scrcpy-desktop/public/
+          mkdir -p scrcpy-desktop/public/dist
+          cp -r public/dist/* scrcpy-desktop/public/dist/
           echo "Copying vendor files (public/vendor)..."
           cp -r public/vendor scrcpy-desktop/public/
           echo "Copying package files (package.json, package-lock.json)..."
