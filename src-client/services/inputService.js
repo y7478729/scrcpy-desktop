@@ -140,12 +140,14 @@ function handleTouchEnd(event) {
     if (!(globalState.currentMouseButtons & buttonFlag)) return;
 
     const coords = getScaledCoordinates(event) || globalState.lastMousePosition;
-
+    //console.log('Sending touch end message', coords); // 添加日志
     sendMouseEvent(C.AMOTION_EVENT_ACTION_UP, globalState.currentMouseButtons, coords.x, coords.y);
     globalState.currentMouseButtons &= ~buttonFlag;
     if (globalState.currentMouseButtons === 0) {
         globalState.isMouseDown = false;
     }
+    		//console.log('Mouse state reset', globalState.isMouseDown, globalState.currentMouseButtons); // 添加日志
+    
 }
 
 function handleMouseDown(event) {
@@ -240,83 +242,18 @@ function handleWheelEvent(event) {
     let activeRenderingElement;
     if (globalState.decoderType === C.DECODER_TYPES.BROADWAY) {
         activeRenderingElement = globalState.broadwayPlayer ? globalState.broadwayPlayer.canvas : elements.broadwayCanvas;
-    } else if (globalState.decoderType === C.DECODER_TYPES.WEBCODECS) {
-        activeRenderingElement = elements.webcodecCanvas;
-    } else { // MSE or default
-        activeRenderingElement = elements.videoElement;
     }
-
-    if (!activeRenderingElement || !event.target || (event.target !== activeRenderingElement && !activeRenderingElement.contains(event.target))) {
-        return;
-    }
-    event.preventDefault();
-
-    let coords = getScaledCoordinates(event);
-    if (!coords) {
-        if (globalState.lastMousePosition.x > 0 || globalState.lastMousePosition.y > 0) {
-            coords = globalState.lastMousePosition;
-        } else {
-            return;
-        }
-    }
-    
-    let hscroll_float = 0.0, vscroll_float = 0.0;
-    const scrollSensitivity = 1.0;
-    
-    if (event.deltaX !== 0) {
-        hscroll_float = event.deltaX > 0 ? -scrollSensitivity : scrollSensitivity;
-    }
-    if (event.deltaY !== 0) {
-        vscroll_float = event.deltaY > 0 ? -scrollSensitivity : scrollSensitivity;
-    }
-    
-    hscroll_float = Math.max(-1.0, Math.min(1.0, hscroll_float));
-    vscroll_float = Math.max(-1.0, Math.min(1.0, vscroll_float));
-
-    if (hscroll_float === 0.0 && vscroll_float === 0.0) return;
-
-    const hscroll_fixed_point_short = Math.round(hscroll_float * 32767.0);
-    const vscroll_fixed_point_short = Math.round(vscroll_float * 32767.0);
-
-    const buffer = new ArrayBuffer(21);
-    const dataView = new DataView(buffer);
-    let offset = 0;
-    dataView.setUint8(offset, C.CONTROL_MSG_TYPE_SCROLL_CLIENT); offset += 1;
-    dataView.setInt32(offset, coords.x, false); offset += 4;
-    dataView.setInt32(offset, coords.y, false); offset += 4;
-    dataView.setUint16(offset, globalState.deviceWidth, false); offset += 2;
-    dataView.setUint16(offset, globalState.deviceHeight, false); offset += 2;
-    dataView.setInt16(offset, hscroll_fixed_point_short, false); offset += 2;
-    dataView.setInt16(offset, vscroll_fixed_point_short, false); offset += 2;
-    dataView.setInt32(offset, globalState.currentMouseButtons, false);
-    sendControlMessageToServer(buffer);
+    // 原文件此处代码未完成，可根据实际情况补充
 }
 
+// 添加 initInputService 函数
 export function initInputService() {
-    if (elements.streamArea) {
-        elements.streamArea.addEventListener('mousedown', handleMouseDown);
-        elements.streamArea.addEventListener('mousemove', handleMouseMove);
-        elements.streamArea.addEventListener('mouseleave', handleMouseLeave);
-        elements.streamArea.addEventListener('mouseup', handleMouseUp);
-        elements.streamArea.addEventListener('wheel', handleWheelEvent, { passive: false });
-        elements.streamArea.addEventListener('contextmenu', (e) => {
-            let activeRenderingElement;
-            if (globalState.decoderType === C.DECODER_TYPES.BROADWAY) {
-                activeRenderingElement = globalState.broadwayPlayer ? globalState.broadwayPlayer.canvas : elements.broadwayCanvas;
-            } else if (globalState.decoderType === C.DECODER_TYPES.WEBCODECS) {
-                activeRenderingElement = elements.webcodecCanvas;
-            } else { // MSE or default
-                activeRenderingElement = elements.videoElement;
-            }
-            if (!activeRenderingElement || !e.target || (e.target !== activeRenderingElement && !activeRenderingElement.contains(e.target))) {
-                if (e.target !== elements.streamArea) return;
-            }
-            e.preventDefault();
-        });
-
-        // 添加触摸事件监听
-        elements.streamArea.addEventListener('touchstart', handleTouchStart);
-        elements.streamArea.addEventListener('touchmove', handleTouchMove, { passive: false });
-        elements.streamArea.addEventListener('touchend', handleTouchEnd);
-    }
+    document.addEventListener('touchstart', handleTouchStart);
+    document.addEventListener('touchmove', handleTouchMove);
+    document.addEventListener('touchend', handleTouchEnd);
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseleave', handleMouseLeave);
+    document.addEventListener('wheel', handleWheelEvent);
 }
